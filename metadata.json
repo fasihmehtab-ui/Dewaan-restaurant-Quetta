@@ -1,0 +1,6 @@
+{
+  "name": "Dewaan - Royal Mughlai Cuisine & Online Ordering",
+  "description": "Authentic royal dining and online ordering experience with meal customization and real-time delivery tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
