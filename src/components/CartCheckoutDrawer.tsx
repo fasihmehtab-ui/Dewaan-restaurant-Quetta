@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, Plus, Minus, Trash2, ShoppingBag, ShieldCheck, 
-  MapPin, Clock, CreditCard, DollarSign, Check, Tag, AlertCircle 
+  MapPin, Clock, CreditCard, DollarSign, Check, Tag, AlertCircle, User,
+  MessageCircle
 } from 'lucide-react';
 import { CartItem, Order, OrderStatus } from '../types';
-import { saveOrderToSupabase } from '../utils/supabaseService';
+import { saveOrderToSupabase, CustomerUser } from '../utils/supabaseService';
 import { SUPABASE_CONFIG } from '../utils/supabaseClient';
 import { formatPKR } from '../utils/currency';
 
@@ -16,6 +17,8 @@ interface CartCheckoutDrawerProps {
   onRemoveItem: (cartItemId: string) => void;
   onClearCart: () => void;
   onOrderPlaced: (order: Order) => void;
+  currentUser?: CustomerUser | null;
+  onOpenAuthModal?: () => void;
 }
 
 export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
@@ -26,18 +29,30 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   onRemoveItem,
   onClearCart,
   onOrderPlaced,
+  currentUser,
+  onOpenAuthModal,
 }) => {
   const [step, setStep] = useState<'cart' | 'checkout'>('cart');
   const [orderType, setOrderType] = useState<'delivery' | 'pickup'>('delivery');
 
   // Customer form details
-  const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [fullName, setFullName] = useState(currentUser?.fullName || '');
+  const [phone, setPhone] = useState(currentUser?.phone || '');
   const [phoneError, setPhoneError] = useState('');
-  const [email, setEmail] = useState('');
-  const [address, setAddress] = useState('');
+  const [email, setEmail] = useState(currentUser?.email || '');
+  const [address, setAddress] = useState(currentUser?.deliveryAddress || '');
   const [aptSuite, setAptSuite] = useState('');
   const [deliveryNotes, setDeliveryNotes] = useState('');
+
+  // Sync if currentUser updates
+  useEffect(() => {
+    if (currentUser) {
+      if (!fullName && currentUser.fullName) setFullName(currentUser.fullName);
+      if (!phone && currentUser.phone) setPhone(currentUser.phone);
+      if (!email && currentUser.email) setEmail(currentUser.email);
+      if (!address && currentUser.deliveryAddress) setAddress(currentUser.deliveryAddress);
+    }
+  }, [currentUser]);
 
   // Promo code
   const [promoCodeInput, setPromoCodeInput] = useState('');
@@ -319,32 +334,47 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                           </div>
                         </div>
 
-                        {/* Quantity Stepper */}
-                        <div className="mt-3 flex items-center gap-2.5">
-                          <div className="flex items-center bg-[#161822] border border-white/[0.08] rounded-full px-2.5 py-1">
-                            <button
-                              type="button"
-                              onClick={() => onUpdateQuantity(cartItem.cartItemId, cartItem.quantity - 1)}
-                              className="p-1 text-[#8c8e96] hover:text-white"
-                              aria-label="Decrease quantity"
-                            >
-                              <Minus className="w-3 h-3" />
-                            </button>
-                            <span className="font-mono text-xs tabular-nums text-white px-2.5 font-semibold">
-                              {cartItem.quantity}
+                        {/* Quantity Stepper & WhatsApp Quick Order */}
+                        <div className="mt-3 flex items-center justify-between gap-2.5 flex-wrap">
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex items-center bg-[#161822] border border-white/[0.08] rounded-full px-2.5 py-1">
+                              <button
+                                type="button"
+                                onClick={() => onUpdateQuantity(cartItem.cartItemId, cartItem.quantity - 1)}
+                                className="p-1 text-[#8c8e96] hover:text-white cursor-pointer"
+                                aria-label="Decrease quantity"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              <span className="font-mono text-xs tabular-nums text-white px-2.5 font-semibold">
+                                {cartItem.quantity}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => onUpdateQuantity(cartItem.cartItemId, cartItem.quantity + 1)}
+                                className="p-1 text-[#8c8e96] hover:text-white cursor-pointer"
+                                aria-label="Increase quantity"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <span className="text-[11px] text-[#71747d] font-mono tabular-nums">
+                              @ {formatPKR(cartItem.unitPrice)} each
                             </span>
-                            <button
-                              type="button"
-                              onClick={() => onUpdateQuantity(cartItem.cartItemId, cartItem.quantity + 1)}
-                              className="p-1 text-[#8c8e96] hover:text-white"
-                              aria-label="Increase quantity"
-                            >
-                              <Plus className="w-3 h-3" />
-                            </button>
                           </div>
-                          <span className="text-[11px] text-[#71747d] font-mono tabular-nums">
-                            @ {formatPKR(cartItem.unitPrice)} each
-                          </span>
+
+                          <a
+                            href={`https://wa.me/923118427913?text=${encodeURIComponent(
+                              `Hello Dewaan, I want to order: ${cartItem.menuItem.name} - Price: ${formatPKR(cartItem.totalPrice)} - Quantity: ${cartItem.quantity}. My Address is: ${address ? address : ''}`
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] font-medium text-[#25D366] hover:text-[#20ba5a] transition-colors"
+                            title="Order this dish on WhatsApp"
+                          >
+                            <MessageCircle className="w-3 h-3 fill-current" />
+                            <span>Order on WhatsApp</span>
+                          </a>
                         </div>
                       </div>
                     ))}
@@ -395,6 +425,46 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
           ) : (
             /* Step 2: Checkout Form */
             <form onSubmit={handleCreateOrder} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5 text-xs">
+              {/* Authentication Status / Account Bar */}
+              {currentUser ? (
+                <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-full bg-emerald-500 text-black flex items-center justify-center font-bold text-[10px]">
+                      {currentUser.fullName?.[0]?.toUpperCase() || 'P'}
+                    </div>
+                    <div>
+                      <span className="text-white font-medium block">Signed in as {currentUser.fullName}</span>
+                      <span className="text-[10px] text-emerald-400 font-mono">Quetta delivery profile linked</span>
+                    </div>
+                  </div>
+                  {onOpenAuthModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenAuthModal}
+                      className="text-[11px] text-[#ebd8ab] hover:underline font-medium"
+                    >
+                      Account
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3 bg-[#161822] border border-white/[0.08] rounded-2xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 text-[#a0a3af]">
+                    <User className="w-4 h-4 text-[#dfba6c]" />
+                    <span>Ordering as Guest</span>
+                  </div>
+                  {onOpenAuthModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenAuthModal}
+                      className="text-[#dfba6c] hover:underline font-semibold text-xs"
+                    >
+                      Sign In with Supabase →
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Order Type Toggle */}
               <div>
                 <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-2">
@@ -639,30 +709,62 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
               </div>
 
               {step === 'cart' ? (
-                <button
-                  type="button"
-                  onClick={() => setStep('checkout')}
-                  className="w-full py-3.5 px-5 bg-gradient-to-r from-[#e9c878] via-[#dfba6c] to-[#c59d5f] hover:brightness-110 active:scale-98 text-[#090a0d] font-semibold text-xs sm:text-sm rounded-full shadow-lg shadow-[#dfba6c]/20 transition-all focus:outline-none flex items-center justify-between"
-                >
-                  <span>Proceed to Delivery</span>
-                  <span className="font-mono tabular-nums font-bold">{formatPKR(total)}</span>
-                </button>
+                <div className="space-y-2.5">
+                  {/* Order on WhatsApp button */}
+                  <a
+                    href={`https://wa.me/923118427913?text=${encodeURIComponent(
+                      items.length === 1
+                        ? `Hello Dewaan, I want to order: ${items[0].menuItem.name} - Price: ${formatPKR(items[0].totalPrice)} - Quantity: ${items[0].quantity}. My Address is: ${address ? address : ''}`
+                        : `Hello Dewaan, I want to order: ${items.map((it) => `${it.menuItem.name} (Qty: ${it.quantity})`).join(', ')} - Price: ${formatPKR(total)} - Quantity: ${items.reduce((s, it) => s + it.quantity, 0)}. My Address is: ${address ? address : ''}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3.5 px-5 bg-[#25D366] hover:bg-[#20ba5a] active:scale-98 text-white font-semibold text-xs sm:text-sm rounded-full shadow-lg shadow-[#25D366]/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <MessageCircle className="w-4 h-4 fill-current shrink-0" />
+                    <span>Order on WhatsApp</span>
+                  </a>
+
+                  {/* Proceed to in-app Checkout */}
+                  <button
+                    type="button"
+                    onClick={() => setStep('checkout')}
+                    className="w-full py-3 px-5 bg-gradient-to-r from-[#e9c878] via-[#dfba6c] to-[#c59d5f] hover:brightness-110 active:scale-98 text-[#090a0d] font-semibold text-xs sm:text-sm rounded-full shadow-md shadow-[#dfba6c]/20 transition-all focus:outline-none flex items-center justify-between cursor-pointer"
+                  >
+                    <span>Proceed to Delivery</span>
+                    <span className="font-mono tabular-nums font-bold">{formatPKR(total)}</span>
+                  </button>
+                </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   <button
                     type="button"
                     onClick={handleCreateOrder}
                     disabled={isSubmitting}
-                    className="w-full py-3.5 px-5 bg-gradient-to-r from-[#e9c878] via-[#dfba6c] to-[#c59d5f] hover:brightness-110 active:scale-98 text-[#090a0d] font-semibold text-xs sm:text-sm rounded-full shadow-lg shadow-[#dfba6c]/20 transition-all focus:outline-none flex items-center justify-between disabled:opacity-50"
+                    className="w-full py-3.5 px-5 bg-gradient-to-r from-[#e9c878] via-[#dfba6c] to-[#c59d5f] hover:brightness-110 active:scale-98 text-[#090a0d] font-semibold text-xs sm:text-sm rounded-full shadow-lg shadow-[#dfba6c]/20 transition-all focus:outline-none flex items-center justify-between disabled:opacity-50 cursor-pointer"
                   >
                     <span>{isSubmitting ? 'Confirming Order...' : 'Place Royal Order'}</span>
                     <span className="font-mono tabular-nums font-bold">{formatPKR(total)}</span>
                   </button>
 
+                  <a
+                    href={`https://wa.me/923118427913?text=${encodeURIComponent(
+                      items.length === 1
+                        ? `Hello Dewaan, I want to order: ${items[0].menuItem.name} - Price: ${formatPKR(items[0].totalPrice)} - Quantity: ${items[0].quantity}. My Address is: ${address || ''}`
+                        : `Hello Dewaan, I want to order: ${items.map((it) => `${it.menuItem.name} (Qty: ${it.quantity})`).join(', ')} - Price: ${formatPKR(total)} - Quantity: ${items.reduce((s, it) => s + it.quantity, 0)}. My Address is: ${address || ''}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3 px-5 bg-[#25D366] hover:bg-[#20ba5a] active:scale-98 text-white font-semibold text-xs rounded-full transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#25D366]/20"
+                  >
+                    <MessageCircle className="w-4 h-4 fill-current shrink-0" />
+                    <span>Send Order via WhatsApp</span>
+                  </a>
+
                   <button
                     type="button"
                     onClick={() => setStep('cart')}
-                    className="w-full py-1 text-center text-xs text-[#8c8e96] hover:text-white"
+                    className="w-full py-1 text-center text-xs text-[#8c8e96] hover:text-white cursor-pointer"
                   >
                     ← Back to Items
                   </button>

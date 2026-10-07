@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ShoppingBag, Clock, Menu as MenuIcon, X, Sparkles } from 'lucide-react';
+import { ShoppingBag, Clock, Menu as MenuIcon, X, Sparkles, User, ShieldCheck } from 'lucide-react';
 import { formatPKR } from '../utils/currency';
+import { CustomerUser } from '../utils/supabaseService';
 
 interface HeaderProps {
   activeTab: 'menu' | 'track' | 'heritage' | 'reserve';
@@ -10,6 +11,8 @@ interface HeaderProps {
   openCart: () => void;
   hasActiveDelivery: boolean;
   activeOrderId?: string;
+  currentUser?: CustomerUser | null;
+  onOpenAuthModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -20,6 +23,8 @@ export const Header: React.FC<HeaderProps> = ({
   openCart,
   hasActiveDelivery,
   activeOrderId,
+  currentUser,
+  onOpenAuthModal,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -106,7 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
 
           {/* Zone 3: Modern Primary Actions */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3">
             {hasActiveDelivery && activeTab !== 'track' && (
               <button
                 onClick={() => handleNavClick('track')}
@@ -116,6 +121,35 @@ export const Header: React.FC<HeaderProps> = ({
                 <Clock className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: '6s' }} />
                 <span className="font-mono tabular-nums">Delivery in Progress</span>
               </button>
+            )}
+
+            {/* User Account / Sign In Button */}
+            {onOpenAuthModal && (
+              currentUser ? (
+                <button
+                  type="button"
+                  onClick={onOpenAuthModal}
+                  className="flex items-center gap-2 px-3 sm:px-3.5 py-2 text-xs font-medium text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/30 rounded-full transition-colors shadow-sm"
+                  title="View your royal patron account & past orders"
+                >
+                  <div className="w-5 h-5 rounded-full bg-emerald-500 text-[#090a0d] flex items-center justify-center text-[10px] font-bold">
+                    {currentUser.fullName?.[0]?.toUpperCase() || 'P'}
+                  </div>
+                  <span className="hidden sm:inline font-sans max-w-[90px] truncate">
+                    {currentUser.fullName.split(' ')[0] || 'Patron'}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onOpenAuthModal}
+                  className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 text-xs font-medium text-[#ebd8ab] bg-white/[0.04] hover:bg-white/[0.08] hover:text-white border border-white/[0.08] rounded-full transition-colors"
+                  title="Sign in or register with Supabase"
+                >
+                  <User className="w-3.5 h-3.5 text-[#dfba6c]" />
+                  <span className="hidden sm:inline font-sans">Sign In</span>
+                </button>
+              )
             )}
 
             <button
@@ -188,6 +222,24 @@ export const Header: React.FC<HeaderProps> = ({
           >
             Dine-In Table Reservation
           </button>
+
+          {onOpenAuthModal && (
+            <button
+              onClick={() => {
+                onOpenAuthModal();
+                setMobileMenuOpen(false);
+              }}
+              className="w-full text-left py-2.5 px-4 rounded-xl text-sm bg-white/[0.04] text-[#ebd8ab] border border-white/[0.06] flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-[#dfba6c]" />
+                <span>{currentUser ? `Account: ${currentUser.fullName}` : 'Sign In / Register with Supabase'}</span>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-400">
+                {currentUser ? 'Logged In' : 'Auth'}
+              </span>
+            </button>
+          )}
         </div>
       )}
     </header>

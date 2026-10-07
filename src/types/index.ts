@@ -18,6 +18,19 @@ export type DietaryTag =
   | 'chef_signature'
   | 'contains_nuts';
 
+export type DishCategory = 'BBQ' | 'Karahi' | 'Fast Food' | 'Biryani' | 'Drinks';
+
+export interface Dish {
+  id: string;
+  name: string;
+  category: DishCategory;
+  price: number;
+  image: string;
+  is_available: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface PortionOption {
   id: string;
   name: string;
@@ -53,6 +66,7 @@ export interface MenuItem {
   marketPriceNotes?: string; // Reason or daily market rate notes (e.g. Quetta livestock rate)
   isAvailable?: boolean; // Real-time availability
   image: string;
+  videoUrl?: string; // Product/dish video (MP4, YouTube embed, or direct video stream)
   fallbackGradient?: string;
   description: string;
   culinaryNotes: string;

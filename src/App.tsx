@@ -9,17 +9,23 @@ import { CartCheckoutDrawer } from './components/CartCheckoutDrawer';
 import { TableReservationModal } from './components/TableReservationModal';
 import { SupabaseStatusModal } from './components/SupabaseStatusModal';
 import { AdminPortal } from './components/AdminPortal';
+import { CustomerAuthModal } from './components/CustomerAuthModal';
+import { WelcomeAuthModal } from './components/WelcomeAuthModal';
 import { Footer } from './components/Footer';
 
 import { MENU_ITEMS } from './data/menuData';
 import { MenuItem, CartItem, Order } from './types';
 import { getSavedOrders, saveOrders } from './utils/orderStorage';
-import { fetchOrdersFromSupabase, updateOrderInSupabase, fetchMenuItemsFromSupabase } from './utils/supabaseService';
+import { fetchOrdersFromSupabase, updateOrderInSupabase, fetchMenuItemsFromSupabase, CustomerUser, getCurrentCustomerSession } from './utils/supabaseService';
 import { Check, Clock, ChevronRight } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'menu' | 'track' | 'heritage' | 'reserve'>('menu');
   const [menuItems, setMenuItems] = useState<MenuItem[]>(MENU_ITEMS);
+  const [currentUser, setCurrentUser] = useState<CustomerUser | null>(() => getCurrentCustomerSession());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup' | 'profile'>('signin');
+  const [isWelcomeModalOpen, setIsWelcomeModalOpen] = useState(false);
   const [cartItems, setCartItems] = useState<CartItem[]>(() => {
     try {
       const stored = localStorage.getItem('dewaan_cart_v1');
@@ -50,6 +56,23 @@ export default function App() {
       console.error(e);
     }
   }, [cartItems]);
+
+  // Check visitor session on initial arrival
+  useEffect(() => {
+    try {
+      const hasSeen = sessionStorage.getItem('dewaan_welcome_seen_v1');
+      const session = getCurrentCustomerSession();
+      if (!session && !hasSeen) {
+        const timer = setTimeout(() => {
+          setIsWelcomeModalOpen(true);
+          sessionStorage.setItem('dewaan_welcome_seen_v1', 'true');
+        }, 800);
+        return () => clearTimeout(timer);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
 
   // Purge any stale dummy DW-8942 order and fetch real orders from Supabase on startup
   useEffect(() => {
@@ -220,6 +243,11 @@ export default function App() {
         openCart={() => setIsCartOpen(true)}
         hasActiveDelivery={hasActiveDelivery}
         activeOrderId={activeOrder?.id}
+        currentUser={currentUser}
+        onOpenAuthModal={() => {
+          setAuthModalMode(currentUser ? 'profile' : 'signin');
+          setIsAuthModalOpen(true);
+        }}
       />
 
       {/* Main Content Areas */}
@@ -303,6 +331,11 @@ export default function App() {
           onRemoveItem={handleRemoveItem}
           onClearCart={handleClearCart}
           onOrderPlaced={handleOrderPlaced}
+          currentUser={currentUser}
+          onOpenAuthModal={() => {
+            setAuthModalMode(currentUser ? 'profile' : 'signin');
+            setIsAuthModalOpen(true);
+          }}
         />
       )}
 
@@ -339,6 +372,47 @@ export default function App() {
           }}
           menuItems={menuItems}
           onUpdateMenuItems={setMenuItems}
+        />
+      )}
+
+      {/* Customer User Authentication Modal */}
+      {isAuthModalOpen && (
+        <CustomerAuthModal
+          isOpen={isAuthModalOpen}
+          onClose={() => setIsAuthModalOpen(false)}
+          currentUser={currentUser}
+          onUserChange={(user) => {
+            setCurrentUser(user);
+            if (user) {
+              setToastMessage(`Signed in as ${user.fullName}`);
+              setTimeout(() => setToastMessage(null), 3000);
+            } else {
+              setToastMessage('Signed out successfully.');
+              setTimeout(() => setToastMessage(null), 3000);
+            }
+          }}
+          orders={orders}
+          onSelectOrder={(id) => {
+            setActiveOrderId(id);
+            setActiveTab('track');
+          }}
+          initialMode={authModalMode}
+        />
+      )}
+
+      {/* Visitor Arrival Welcome & Auth Prompt */}
+      {isWelcomeModalOpen && !currentUser && (
+        <WelcomeAuthModal
+          isOpen={isWelcomeModalOpen}
+          onClose={() => setIsWelcomeModalOpen(false)}
+          onOpenSignIn={() => {
+            setAuthModalMode('signin');
+            setIsAuthModalOpen(true);
+          }}
+          onOpenSignUp={() => {
+            setAuthModalMode('signup');
+            setIsAuthModalOpen(true);
+          }}
         />
       )}
 

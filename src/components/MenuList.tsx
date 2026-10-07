@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Flame, Clock, Sparkles, Filter, Plus, ArrowRight } from 'lucide-react';
+import { Search, Flame, Clock, Sparkles, Filter, Plus, ArrowRight, Video, Play, X, MessageCircle } from 'lucide-react';
 import { MenuItem, Category, DietaryTag } from '../types';
 import { CATEGORIES } from '../data/menuData';
 import { formatPKR } from '../utils/currency';
@@ -13,6 +13,7 @@ export const MenuList: React.FC<MenuListProps> = ({ items, onOpenCustomizer }) =
   const [selectedCategory, setSelectedCategory] = useState<Category>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeDietaryFilter, setActiveDietaryFilter] = useState<DietaryTag | 'all'>('all');
+  const [activeVideoModal, setActiveVideoModal] = useState<{ url: string; title: string } | null>(null);
 
   // Filter logic
   const filteredItems = useMemo(() => {
@@ -190,6 +191,21 @@ export const MenuList: React.FC<MenuListProps> = ({ items, onOpenCustomizer }) =
                     {item.urduName}
                   </div>
                 )}
+
+                {/* Video Play Badge if Video URL is provided */}
+                {item.videoUrl && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveVideoModal({ url: item.videoUrl!, title: item.name });
+                    }}
+                    className="absolute bottom-2.5 right-3.5 flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-600/90 hover:bg-red-500 text-white text-[11px] font-semibold shadow-lg backdrop-blur-md transition-all hover:scale-105 z-10"
+                  >
+                    <Play className="w-3 h-3 fill-current" />
+                    <span>Watch Video</span>
+                  </button>
+                )}
               </div>
 
               {/* Card Body */}
@@ -270,19 +286,65 @@ export const MenuList: React.FC<MenuListProps> = ({ items, onOpenCustomizer }) =
                       Sold Out
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => onOpenCustomizer(item)}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-[#090a0d] bg-[#dfba6c] hover:bg-[#ebd8ab] active:scale-95 rounded-full transition-all duration-150 shadow-sm focus:outline-none whitespace-nowrap"
-                    >
-                      <span>Customize</span>
-                      <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={`https://wa.me/923118427913?text=${encodeURIComponent(
+                          `Hello Dewaan, I want to order: ${item.name} - Price: ${formatPKR(item.dailyMarketPrice || item.basePrice)} - Quantity: 1. My Address is:`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#25D366] hover:text-white bg-[#25D366]/10 hover:bg-[#25D366] border border-[#25D366]/30 rounded-full transition-all whitespace-nowrap cursor-pointer"
+                        title="Order on WhatsApp"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5 fill-current" />
+                        <span className="hidden sm:inline">WhatsApp</span>
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={() => onOpenCustomizer(item)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-[#090a0d] bg-[#dfba6c] hover:bg-[#ebd8ab] active:scale-95 rounded-full transition-all duration-150 shadow-sm focus:outline-none whitespace-nowrap cursor-pointer"
+                      >
+                        <span>Customize</span>
+                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Customer Video Player Modal */}
+      {activeVideoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-[#12141a] border border-white/[0.1] rounded-3xl p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-white/[0.08] mb-3">
+              <div className="flex items-center gap-2">
+                <Video className="w-4 h-4 text-red-400" />
+                <h4 className="font-serif text-base font-bold text-white">
+                  {activeVideoModal.title} — Video Presentation
+                </h4>
+              </div>
+              <button
+                onClick={() => setActiveVideoModal(null)}
+                className="p-1.5 text-[#8c8e96] hover:text-white rounded-full bg-white/[0.04]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="rounded-2xl overflow-hidden bg-black aspect-video flex items-center justify-center">
+              <video
+                src={activeVideoModal.url}
+                controls
+                autoPlay
+                className="w-full h-full object-contain"
+              />
+            </div>
+          </div>
         </div>
       )}
     </section>
