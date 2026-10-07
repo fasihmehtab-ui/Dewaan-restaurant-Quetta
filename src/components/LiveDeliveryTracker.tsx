@@ -922,7 +922,27 @@ export const LiveDeliveryTracker: React.FC<LiveDeliveryTrackerProps> = ({
 
             <div className="flex gap-2 mt-6 no-print">
               <button
-                onClick={() => window.print()}
+                onClick={() => {
+                  const content = document.getElementById('print-receipt');
+                  if (!content) return;
+                  try {
+                    const printWindow = window.open('', '_blank', 'height=600,width=800');
+                    if (printWindow) {
+                      printWindow.document.write('<html><head><title>DEWAAN Receipt</title>');
+                      printWindow.document.write('<style>body{font-family:sans-serif; padding:20px;} .no-print{display:none;}</style>');
+                      printWindow.document.write('</head><body>');
+                      printWindow.document.write(content.innerHTML);
+                      printWindow.document.write('</body></html>');
+                      printWindow.document.close();
+                      printWindow.focus();
+                      printWindow.print();
+                      return;
+                    }
+                  } catch {
+                    // Popup blocked or restricted
+                  }
+                  window.print();
+                }}
                 className="flex-1 bg-black text-white py-2.5 rounded-full font-bold cursor-pointer hover:bg-gray-800 transition-colors"
               >
                 Print کریں
