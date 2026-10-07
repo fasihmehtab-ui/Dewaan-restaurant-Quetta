@@ -418,13 +418,48 @@ export default function App() {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3 bg-[#14161f]/95 border border-[#dfba6c]/40 backdrop-blur-xl text-[#f1f2f5] text-xs font-medium rounded-full shadow-2xl shadow-[#dfba6c]/10 animate-in slide-in-from-bottom-3 duration-200">
+        <div className="fixed bottom-24 right-6 z-50 flex items-center gap-3 px-5 py-3 bg-[#14161f]/95 border border-[#dfba6c]/40 backdrop-blur-xl text-[#f1f2f5] text-xs font-medium rounded-full shadow-2xl shadow-[#dfba6c]/10 animate-in slide-in-from-bottom-3 duration-200">
           <div className="w-5 h-5 rounded-full bg-[#dfba6c] text-[#090a0d] flex items-center justify-center shrink-0 shadow-sm">
             <Check className="w-3.5 h-3.5 stroke-[3]" />
           </div>
           <span>{toastMessage}</span>
         </div>
       )}
+
+      {/* Floating WhatsApp Button */}
+      <a 
+        href="https://wa.me/923118427913?text=Salam%20Dewaan%20Royal%20Awadhi%20Cuisine%20Order%20karna%20hai"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Chat on WhatsApp"
+        title="Chat on WhatsApp"
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          backgroundColor: '#25D366',
+          width: '60px',
+          height: '60px',
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          cursor: 'pointer',
+          transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'scale(1.08)';
+          e.currentTarget.style.boxShadow = '0 6px 18px rgba(37,211,102,0.4)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'scale(1)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        }}
+      >
+        <span style={{ fontSize: '30px', lineHeight: 1 }}>💬</span>
+      </a>
 
     </div>
   );
