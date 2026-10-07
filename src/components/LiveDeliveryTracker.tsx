@@ -34,6 +34,14 @@ export const LiveDeliveryTracker: React.FC<LiveDeliveryTrackerProps> = ({
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callState, setCallState] = useState<'calling' | 'connected' | 'ended'>('calling');
 
+  // Print Receipt modal state
+  const [selectedOrder, setSelectedOrder] = useState<{
+    customer_name: string;
+    phone: string;
+    total: number | string;
+    items: React.ReactNode;
+  } | null>(null);
+
   // Order lookup input
   const [lookupId, setLookupId] = useState('');
   const [lookupError, setLookupError] = useState('');
@@ -608,9 +616,34 @@ export const LiveDeliveryTracker: React.FC<LiveDeliveryTrackerProps> = ({
               <span className="text-xs font-mono uppercase tracking-widest text-[#dfba6c]">
                 Customized Order Receipt
               </span>
-              <span className="text-xs font-mono tabular-nums text-[#8c8e96]">
-                {currentOrder.items.length} {currentOrder.items.length === 1 ? 'item' : 'items'}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedOrder({
+                      customer_name: currentOrder.customer.fullName || 'Royal Patron',
+                      phone: currentOrder.customer.phone || '+92...',
+                      total: currentOrder.total,
+                      items: (
+                        <div className="space-y-1">
+                          {currentOrder.items.map((it, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-xs">
+                              <span>{it.quantity}x {it.menuItem.name}</span>
+                              <span className="font-mono">Rs. {it.totalPrice}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ),
+                    });
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] text-[10px] font-bold transition-all shadow-sm cursor-pointer"
+                >
+                  Print Receipt
+                </button>
+                <span className="text-xs font-mono tabular-nums text-[#8c8e96]">
+                  {currentOrder.items.length} {currentOrder.items.length === 1 ? 'item' : 'items'}
+                </span>
+              </div>
             </div>
 
             {/* Items list */}
@@ -856,6 +889,50 @@ export const LiveDeliveryTracker: React.FC<LiveDeliveryTrackerProps> = ({
                 <Phone className="w-3 h-3" />
                 <span>Direct Dial Phone (+923118427913)</span>
               </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Thermal Print Receipt Modal requested by User */}
+      {selectedOrder && (
+        <div className="fixed inset-0 bg-black/80 z-[10000] flex items-center justify-center p-4">
+          <div id="print-receipt" className="bg-white text-black w-full max-w-[350px] p-6 rounded-xl shadow-2xl">
+            <div className="text-center border-b-2 border-dashed pb-4 mb-4">
+              <h1 className="font-black text-xl tracking-wider">DEWAAN</h1>
+              <p className="text-xs font-medium tracking-wide">ROYAL AWADHI CUISINE</p>
+              <p className="text-[10px] text-gray-600 mt-2">Quetta, Balochistan</p>
+            </div>
+
+            <div className="text-sm space-y-2">
+              <p><b>Customer:</b> {selectedOrder.customer_name || 'Royal Patron'}</p>
+              <p><b>Phone:</b> {selectedOrder.phone || '+92...'}</p>
+              <p><b>Date:</b> {new Date().toLocaleString()}</p>
+            </div>
+
+            <div className="border-t border-b border-dashed my-4 py-3 text-sm">
+              {selectedOrder.items}
+              <div className="flex justify-between font-bold text-base mt-3 pt-2 border-t border-dashed">
+                <span>Total</span>
+                <span>Rs. {selectedOrder.total}</span>
+              </div>
+            </div>
+
+            <p className="text-center text-[10px] font-medium text-gray-600">Thank You For Your Order!</p>
+
+            <div className="flex gap-2 mt-6 no-print">
+              <button
+                onClick={() => window.print()}
+                className="flex-1 bg-black text-white py-2.5 rounded-full font-bold cursor-pointer hover:bg-gray-800 transition-colors"
+              >
+                Print کریں
+              </button>
+              <button
+                onClick={() => setSelectedOrder(null)}
+                className="flex-1 bg-gray-200 text-black py-2.5 rounded-full font-bold cursor-pointer hover:bg-gray-300 transition-colors"
+              >
+                بند کریں
+              </button>
             </div>
           </div>
         </div>

@@ -110,6 +110,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatus | 'all'>('all');
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<{
+    customer_name: string;
+    phone: string;
+    total: number | string;
+    items: React.ReactNode;
+  } | null>(null);
 
   // Reservations filter & search
   const [resSearchQuery, setResSearchQuery] = useState('');
@@ -1229,13 +1235,38 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
                               {/* Actions */}
                               <td className="py-4 px-4 align-top text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedOrderForModal(ord)}
-                                  className="px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#ebd8ab] text-xs font-medium transition-colors"
-                                >
-                                  View Receipt
-                                </button>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedOrder({
+                                        customer_name: ord.customer.fullName || 'Royal Patron',
+                                        phone: ord.customer.phone || '+92...',
+                                        total: ord.total,
+                                        items: (
+                                          <div className="space-y-1">
+                                            {ord.items.map((it, idx) => (
+                                              <div key={idx} className="flex justify-between items-center text-xs">
+                                                <span>{it.quantity}x {it.menuItem.name}</span>
+                                                <span className="font-mono">Rs. {it.totalPrice}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ),
+                                      });
+                                    }}
+                                    className="px-3 py-1.5 rounded-full bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                                  >
+                                    Print Receipt
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedOrderForModal(ord)}
+                                    className="px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#ebd8ab] text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
+                                  >
+                                    Details
+                                  </button>
+                                </div>
                               </td>
 
                             </tr>
@@ -1991,12 +2022,37 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
             </div>
 
-            <button
-              onClick={() => setSelectedOrderForModal(null)}
-              className="w-full py-2.5 bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-semibold rounded-full transition-colors"
-            >
-              Close Receipt
-            </button>
+            <div className="flex items-center gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedOrder({
+                    customer_name: selectedOrderForModal.customer.fullName || 'Royal Patron',
+                    phone: selectedOrderForModal.customer.phone || '+92...',
+                    total: selectedOrderForModal.total,
+                    items: (
+                      <div className="space-y-1">
+                        {selectedOrderForModal.items.map((it, idx) => (
+                          <div key={idx} className="flex justify-between items-center text-xs">
+                            <span>{it.quantity}x {it.menuItem.name}</span>
+                            <span className="font-mono">Rs. {it.totalPrice}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ),
+                  });
+                }}
+                className="flex-1 py-2.5 bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] text-xs font-bold rounded-full transition-colors cursor-pointer shadow-md"
+              >
+                Print Thermal Receipt
+              </button>
+              <button
+                onClick={() => setSelectedOrderForModal(null)}
+                className="flex-1 py-2.5 bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-semibold rounded-full transition-colors cursor-pointer"
+              >
+                Close Receipt
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2669,6 +2725,50 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 autoPlay
                 className="w-full h-full object-contain"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Thermal Print Receipt Modal requested by User */}
+      {selectedOrder && (
+        <div className="fixed inset-0 bg-black/80 z-[10000] flex items-center justify-center p-4">
+          <div id="print-receipt" className="bg-white text-black w-full max-w-[350px] p-6 rounded-xl shadow-2xl">
+            <div className="text-center border-b-2 border-dashed pb-4 mb-4">
+              <h1 className="font-black text-xl tracking-wider">DEWAAN</h1>
+              <p className="text-xs font-medium tracking-wide">ROYAL AWADHI CUISINE</p>
+              <p className="text-[10px] text-gray-600 mt-2">Quetta, Balochistan</p>
+            </div>
+
+            <div className="text-sm space-y-2">
+              <p><b>Customer:</b> {selectedOrder.customer_name || 'Royal Patron'}</p>
+              <p><b>Phone:</b> {selectedOrder.phone || '+92...'}</p>
+              <p><b>Date:</b> {new Date().toLocaleString()}</p>
+            </div>
+
+            <div className="border-t border-b border-dashed my-4 py-3 text-sm">
+              {selectedOrder.items}
+              <div className="flex justify-between font-bold text-base mt-3 pt-2 border-t border-dashed">
+                <span>Total</span>
+                <span>Rs. {selectedOrder.total}</span>
+              </div>
+            </div>
+
+            <p className="text-center text-[10px] font-medium text-gray-600">Thank You For Your Order!</p>
+
+            <div className="flex gap-2 mt-6 no-print">
+              <button
+                onClick={() => window.print()}
+                className="flex-1 bg-black text-white py-2.5 rounded-full font-bold cursor-pointer hover:bg-gray-800 transition-colors"
+              >
+                Print کریں
+              </button>
+              <button
+                onClick={() => setSelectedOrder(null)}
+                className="flex-1 bg-gray-200 text-black py-2.5 rounded-full font-bold cursor-pointer hover:bg-gray-300 transition-colors"
+              >
+                بند کریں
+              </button>
             </div>
           </div>
         </div>
