@@ -19,6 +19,7 @@ const INITIAL_STARTER_DISHES: Dish[] = [
     price: 850,
     image: '/src/assets/images/quetta_chapli_kebab_1791134777685.jpg',
     is_available: true,
+    delivery_time: '25-30 min',
     created_at: new Date(Date.now() - 3600000 * 5).toISOString(),
   },
   {
@@ -28,6 +29,7 @@ const INITIAL_STARTER_DISHES: Dish[] = [
     price: 2450,
     image: '/src/assets/images/dewaan_karahi_curry_1791045143832.jpg',
     is_available: true,
+    delivery_time: '35-40 min',
     created_at: new Date(Date.now() - 3600000 * 4).toISOString(),
   },
   {
@@ -37,6 +39,7 @@ const INITIAL_STARTER_DISHES: Dish[] = [
     price: 520,
     image: '/src/assets/images/quetta_shawarma_wrap_1791134720429.jpg',
     is_available: true,
+    delivery_time: '20-25 min',
     created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
   },
   {
@@ -46,6 +49,7 @@ const INITIAL_STARTER_DISHES: Dish[] = [
     price: 1650,
     image: '/src/assets/images/dewaan_hero_handi_biryani_1791045111743.jpg',
     is_available: true,
+    delivery_time: '30-35 min',
     created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
   },
   {
@@ -55,6 +59,7 @@ const INITIAL_STARTER_DISHES: Dish[] = [
     price: 180,
     image: '/src/assets/images/dewaan_mango_lassi_drink_1791045660858.jpg',
     is_available: true,
+    delivery_time: '15-20 min',
     created_at: new Date(Date.now() - 3600000 * 1).toISOString(),
   },
 ];
@@ -71,12 +76,14 @@ export const ManageDishes: React.FC = () => {
     category: string;
     image: string;
     is_available: boolean;
+    delivery_time?: string;
   }>({ 
     name: '', 
     price: '', 
     category: 'BBQ', 
     image: '', 
-    is_available: true 
+    is_available: true,
+    delivery_time: '40-45 min'
   });
   const [uploading, setUploading] = useState<boolean>(false);
 
@@ -244,6 +251,7 @@ export const ManageDishes: React.FC = () => {
           category: formData.category,
           image: formData.image,
           is_available: formData.is_available,
+          delivery_time: formData.delivery_time || '40-45 min',
           updated_at: nowIso,
         };
 
@@ -278,6 +286,7 @@ export const ManageDishes: React.FC = () => {
           category: formData.category as DishCategory,
           image: formData.image || '/src/assets/images/quetta_chapli_kebab_1791134777685.jpg',
           is_available: formData.is_available,
+          delivery_time: formData.delivery_time || '40-45 min',
           created_at: nowIso,
           updated_at: nowIso,
         };
@@ -289,6 +298,7 @@ export const ManageDishes: React.FC = () => {
           category: newDish.category,
           image: newDish.image,
           is_available: newDish.is_available,
+          delivery_time: newDish.delivery_time,
           created_at: nowIso,
           updated_at: nowIso,
         };
@@ -431,7 +441,7 @@ export const ManageDishes: React.FC = () => {
             type="button"
             onClick={() => {
               setEditingDish(null);
-              setFormData({ name: '', price: '', category: 'BBQ', image: '', is_available: true });
+              setFormData({ name: '', price: '', category: 'BBQ', image: '', is_available: true, delivery_time: '40-45 min' });
               setShowModal(true);
             }}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-[#e9c878] via-[#dfba6c] to-[#c59d5f] hover:brightness-110 active:scale-98 text-[#090a0d] font-bold text-xs rounded-full shadow-lg shadow-[#dfba6c]/20 transition-all cursor-pointer"
@@ -506,7 +516,7 @@ export const ManageDishes: React.FC = () => {
               type="button"
               onClick={() => {
                 setEditingDish(null);
-                setFormData({ name: '', price: '', category: 'BBQ', image: '', is_available: true });
+                setFormData({ name: '', price: '', category: 'BBQ', image: '', is_available: true, delivery_time: '40-45 min' });
                 setShowModal(true);
               }}
               className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] font-bold text-xs rounded-full shadow-md transition-all cursor-pointer"
@@ -566,9 +576,16 @@ export const ManageDishes: React.FC = () => {
                         <span className="font-semibold text-white block text-sm group-hover:text-[#dfba6c] transition-colors">
                           {dish.name}
                         </span>
-                        <span className="text-[10px] font-mono text-[#71747d] mt-0.5 block">
-                          ID: {dish.id.substring(0, 14)}
-                        </span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] font-mono text-[#71747d]">
+                            ID: {dish.id.substring(0, 14)}
+                          </span>
+                          {dish.delivery_time && (
+                            <span className="text-[10px] font-mono text-[#dfba6c] bg-[#dfba6c]/10 px-1.5 py-0.5 rounded">
+                              ⏱ {dish.delivery_time}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
 
@@ -629,6 +646,7 @@ export const ManageDishes: React.FC = () => {
                               category: dish.category,
                               image: dish.image,
                               is_available: dish.is_available,
+                              delivery_time: dish.delivery_time || '40-45 min',
                             });
                             setShowModal(true);
                           }}
@@ -726,6 +744,20 @@ export const ManageDishes: React.FC = () => {
                 <option>Biryani</option>
                 <option>Drinks</option>
               </select>
+            </div>
+
+            {/* Delivery Time */}
+            <div>
+              <label className="block text-[11px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                Delivery Time
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. 40-45 min"
+                value={formData.delivery_time || ''}
+                onChange={(e) => setFormData({ ...formData, delivery_time: e.target.value })}
+                className="w-full px-3.5 py-2.5 bg-[#141422] border border-white/10 rounded-xl text-white text-xs placeholder-[#71747d] focus:outline-none focus:border-[#dfba6c]"
+              />
             </div>
 
             {/* File Upload to Supabase Storage 'dish-images' bucket */}

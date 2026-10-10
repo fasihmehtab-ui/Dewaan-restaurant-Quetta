@@ -435,7 +435,7 @@ export default function App() {
         title="Chat on WhatsApp"
         style={{
           position: 'fixed',
-          bottom: '20px',
+          bottom: '90px',
           right: '20px',
           backgroundColor: '#25D366',
           width: '60px',

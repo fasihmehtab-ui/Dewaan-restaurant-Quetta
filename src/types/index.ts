@@ -27,6 +27,7 @@ export interface Dish {
   price: number;
   image: string;
   is_available: boolean;
+  delivery_time?: string;
   created_at?: string;
   updated_at?: string;
 }
