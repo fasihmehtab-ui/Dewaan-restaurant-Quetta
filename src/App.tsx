@@ -11,6 +11,9 @@ import { SupabaseStatusModal } from './components/SupabaseStatusModal';
 import { AdminPortal } from './components/AdminPortal';
 import { CustomerAuthModal } from './components/CustomerAuthModal';
 import { WelcomeAuthModal } from './components/WelcomeAuthModal';
+import CustomOrderForm from './components/CustomOrderForm';
+import FloatingButtons from './components/FloatingButtons';
+import WhatsAppCenterButton from './components/WhatsAppCenterButton';
 import { Footer } from './components/Footer';
 
 import { MENU_ITEMS } from './data/menuData';
@@ -46,6 +49,7 @@ export default function App() {
   const [isReservationOpen, setIsReservationOpen] = useState(false);
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
+  const [isCustomOrderOpen, setIsCustomOrderOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Sync cart to localStorage
@@ -248,6 +252,7 @@ export default function App() {
           setAuthModalMode(currentUser ? 'profile' : 'signin');
           setIsAuthModalOpen(true);
         }}
+        onOpenCustomOrder={() => setIsCustomOrderOpen(true)}
       />
 
       {/* Main Content Areas */}
@@ -267,6 +272,11 @@ export default function App() {
               items={menuItems}
               onOpenCustomizer={(item) => setCustomizingItem(item)}
             />
+
+            {/* Custom Order Form Section */}
+            <section id="custom-order-section" className="py-12 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+              <CustomOrderForm />
+            </section>
 
             <HeritageSection
               onReserveTable={() => setIsReservationOpen(true)}
@@ -416,6 +426,21 @@ export default function App() {
         />
       )}
 
+      {/* Custom Order Modal */}
+      {isCustomOrderOpen && (
+        <div 
+          onClick={() => setIsCustomOrderOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg cursor-default"
+          >
+            <CustomOrderForm isModal onClose={() => setIsCustomOrderOpen(false)} />
+          </div>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-24 right-6 z-50 flex items-center gap-3 px-5 py-3 bg-[#14161f]/95 border border-[#dfba6c]/40 backdrop-blur-xl text-[#f1f2f5] text-xs font-medium rounded-full shadow-2xl shadow-[#dfba6c]/10 animate-in slide-in-from-bottom-3 duration-200">
@@ -426,40 +451,9 @@ export default function App() {
         </div>
       )}
 
-      {/* Floating WhatsApp Button */}
-      <a 
-        href="https://wa.me/923118427913?text=Salam%20Dewaan%20Royal%20Awadhi%20Cuisine%20Order%20karna%20hai"
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="Chat on WhatsApp"
-        title="Chat on WhatsApp"
-        style={{
-          position: 'fixed',
-          bottom: '90px',
-          right: '20px',
-          backgroundColor: '#25D366',
-          width: '60px',
-          height: '60px',
-          borderRadius: '50%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          cursor: 'pointer',
-          transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'scale(1.08)';
-          e.currentTarget.style.boxShadow = '0 6px 18px rgba(37,211,102,0.4)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'scale(1)';
-          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
-        }}
-      >
-        <span style={{ fontSize: '30px', lineHeight: 1 }}>💬</span>
-      </a>
+      {/* Floating Buttons: Chatbot on bottom-left, WhatsApp on bottom-center */}
+      <FloatingButtons />
+      <WhatsAppCenterButton />
 
     </div>
   );

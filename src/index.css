@@ -60,3 +60,10 @@
   #print-receipt { position: absolute; left: 0; top: 0; width: 100%; }
   .no-print { display: none !important; }
 }
+
+/* رائٹ سائیڈ والا چیٹ بٹن ہمیشہ کے لیے ختم */
+button.fixed.bottom-6.right-6,
+a.fixed.bottom-6.right-6 {
+  display: none !important;
+}
+

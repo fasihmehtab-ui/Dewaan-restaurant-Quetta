@@ -13,6 +13,7 @@ interface HeaderProps {
   activeOrderId?: string;
   currentUser?: CustomerUser | null;
   onOpenAuthModal?: () => void;
+  onOpenCustomOrder?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -25,6 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeOrderId,
   currentUser,
   onOpenAuthModal,
+  onOpenCustomOrder,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -108,6 +110,17 @@ export const Header: React.FC<HeaderProps> = ({
             >
               Dine-In Reservation
             </button>
+
+            {onOpenCustomOrder && (
+              <button
+                onClick={onOpenCustomOrder}
+                className="px-3.5 py-2 text-xs font-medium rounded-full text-[#ebd8ab] hover:text-white hover:bg-white/[0.04] transition-all duration-200 focus:outline-none flex items-center gap-1.5 cursor-pointer"
+                title="Custom Order / کسٹم آرڈر فارم"
+              >
+                <span>کسٹم آرڈر</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-[#25D366] animate-pulse" />
+              </button>
+            )}
           </nav>
 
           {/* Zone 3: Modern Primary Actions */}
@@ -222,6 +235,23 @@ export const Header: React.FC<HeaderProps> = ({
           >
             Dine-In Table Reservation
           </button>
+
+          {onOpenCustomOrder && (
+            <button
+              onClick={() => {
+                onOpenCustomOrder();
+                setMobileMenuOpen(false);
+              }}
+              className="w-full text-left py-2.5 px-4 rounded-xl text-sm bg-[#800000]/25 hover:bg-[#800000]/40 text-[#ebd8ab] border border-[#800000]/40 flex items-center justify-between transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span>کسٹم آرڈر فارم (Custom Order)</span>
+              </div>
+              <span className="text-[11px] font-mono text-[#25D366] bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                WhatsApp 💬
+              </span>
+            </button>
+          )}
 
           {onOpenAuthModal && (
             <button
