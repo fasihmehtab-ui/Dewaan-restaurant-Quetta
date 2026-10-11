@@ -13,8 +13,11 @@ import {
   checkAdminSlotClaimed, 
   registerMasterAdminSlot, 
   authenticateAdmin, 
+  updateMasterAdminPassword,
   getCurrentAdminSession, 
   logoutAdminSession,
+  AUTHORIZED_MASTER_ADMIN_EMAIL,
+  AUTHORIZED_MASTER_ADMIN_NAME,
   fetchReservationsFromSupabase,
   updateReservationStatusInSupabase,
   updateOrderInSupabase,
@@ -29,15 +32,6 @@ import {
 import { supabase, SUPABASE_CONFIG } from '../utils/supabaseClient';
 import { formatPKR } from '../utils/currency';
 import { ManageDishes } from './ManageDishes';
-
-const DEFAULT_MASTER_ADMIN: AdminUser = {
-  id: 'master-admin-01',
-  username: 'admin',
-  email: 'admin@dewaan.com',
-  fullName: 'Master Administrator',
-  role: 'master_admin',
-  createdAt: '2026-01-01T00:00:00.000Z',
-};
 
 interface AdminPortalProps {
   isOpen: boolean;
@@ -62,8 +56,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const safeOrders = Array.isArray(orders) ? orders : [];
   const safeMenuItems = Array.isArray(menuItems) ? menuItems : [];
 
-  // Admin session - direct access with zero authentication barrier
-  const [currentAdmin, setCurrentAdmin] = useState<AdminUser>(() => getCurrentAdminSession() || DEFAULT_MASTER_ADMIN);
+  // Admin session - strictly locked unless authenticated as fasihmehtab@gmail.com
+  const [currentAdmin, setCurrentAdmin] = useState<AdminUser | null>(() => getCurrentAdminSession());
+  const [isCheckingSlot, setIsCheckingSlot] = useState(true);
+  const [isSlotClaimed, setIsSlotClaimed] = useState(false);
+  const [registeredAdminUser, setRegisteredAdminUser] = useState<AdminUser | null>(null);
+
+  // Lock Screen authentication state
+  const [authEmail, setAuthEmail] = useState(AUTHORIZED_MASTER_ADMIN_EMAIL);
+  const [authFullName, setAuthFullName] = useState(AUTHORIZED_MASTER_ADMIN_NAME);
+  const [authPassword, setAuthPassword] = useState('');
+  const [authConfirmPassword, setAuthConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
+  const [isResetMode, setIsResetMode] = useState(false);
 
   // Active admin tab
   const [activeTab, setActiveTab] = useState<'orders' | 'manage_dishes' | 'reservations' | 'customers' | 'menu_pricing' | 'courier'>('orders');
@@ -149,16 +157,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [catalogCmdOutput, setCatalogCmdOutput] = useState<string | null>(null);
   const [copiedCatalogJson, setCopiedCatalogJson] = useState(false);
 
-  // Ensure master admin session is active on mount
+  // Check admin session and slot claim status on mount/open
   useEffect(() => {
     if (!isOpen) return;
 
     let mounted = true;
-    const session = getCurrentAdminSession() || DEFAULT_MASTER_ADMIN;
+    const session = getCurrentAdminSession();
     setCurrentAdmin(session);
 
-    // Load reservations
-    loadReservations();
+    setIsCheckingSlot(true);
+    checkAdminSlotClaimed().then((res) => {
+      if (!mounted) return;
+      setIsSlotClaimed(res.claimed);
+      if (res.adminUser) {
+        setRegisteredAdminUser(res.adminUser);
+      }
+      setIsCheckingSlot(false);
+    });
+
+    // Only load protected data if authenticated
+    if (session) {
+      loadReservations();
+    }
 
     // Initialize dish row edits map
     const initialEdits: Record<string, {
@@ -225,6 +245,146 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     const data = await fetchReservationsFromSupabase();
     setReservations(data);
     setIsLoadingReservations(false);
+  };
+
+  // Logout handler to immediately re-lock portal
+  const handleLogout = () => {
+    logoutAdminSession();
+    setCurrentAdmin(null);
+    setAuthError(null);
+    setAuthSuccessMsg('Admin portal locked. Single slot session terminated.');
+    setAuthPassword('');
+    setAuthConfirmPassword('');
+    setIsResetMode(false);
+  };
+
+  // Login handler strictly for fasihmehtab@gmail.com
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccessMsg(null);
+
+    if (!authPassword.trim()) {
+      setAuthError('Please enter your master password.');
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    try {
+      const res = await authenticateAdmin(authEmail, authPassword);
+      if (!res.success || !res.user) {
+        setAuthError(res.error || 'Access Denied: Incorrect master password.');
+        setIsSubmittingAuth(false);
+        return;
+      }
+
+      setCurrentAdmin(res.user);
+      setAuthPassword('');
+      setAuthSuccessMsg('Master access verified! Welcome, Fasih Mehtab.');
+      loadReservations();
+    } catch (err: any) {
+      setAuthError(err.message || 'Authentication error.');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  };
+
+  // Register / claim single slot handler for fasihmehtab@gmail.com
+  const handleRegisterSlot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccessMsg(null);
+
+    if (authEmail.trim().toLowerCase() !== AUTHORIZED_MASTER_ADMIN_EMAIL.toLowerCase()) {
+      setAuthError(`Access Denied: The single slot is strictly locked to ${AUTHORIZED_MASTER_ADMIN_EMAIL}.`);
+      return;
+    }
+
+    if (!authPassword.trim()) {
+      setAuthError('Please enter a secure master password.');
+      return;
+    }
+
+    if (authPassword !== authConfirmPassword) {
+      setAuthError('Passwords do not match. Please retype carefully.');
+      return;
+    }
+
+    if (authPassword.length < 4) {
+      setAuthError('Password must be at least 4 characters long.');
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    try {
+      const res = await registerMasterAdminSlot({
+        username: 'fasihmehtab',
+        email: AUTHORIZED_MASTER_ADMIN_EMAIL,
+        fullName: authFullName.trim() || AUTHORIZED_MASTER_ADMIN_NAME,
+        password: authPassword.trim(),
+      });
+
+      if (!res.success || !res.user) {
+        setAuthError(res.error || 'Failed to initialize master admin slot.');
+        setIsSubmittingAuth(false);
+        return;
+      }
+
+      setIsSlotClaimed(true);
+      setRegisteredAdminUser(res.user);
+      setCurrentAdmin(res.user);
+      setAuthPassword('');
+      setAuthConfirmPassword('');
+      setAuthSuccessMsg('Single master slot claimed and locked to fasihmehtab@gmail.com!');
+      loadReservations();
+    } catch (err: any) {
+      setAuthError(err.message || 'Registration error.');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  };
+
+  // Reset or update password handler for fasihmehtab@gmail.com
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccessMsg(null);
+
+    if (!authPassword.trim()) {
+      setAuthError('Please enter a new master password.');
+      return;
+    }
+
+    if (authPassword !== authConfirmPassword) {
+      setAuthError('Passwords do not match.');
+      return;
+    }
+
+    if (authPassword.length < 4) {
+      setAuthError('Password must be at least 4 characters long.');
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    try {
+      const res = await updateMasterAdminPassword(authPassword.trim());
+      if (!res.success || !res.user) {
+        setAuthError(res.error || 'Failed to update master password.');
+        setIsSubmittingAuth(false);
+        return;
+      }
+
+      setCurrentAdmin(res.user);
+      setIsResetMode(false);
+      setAuthPassword('');
+      setAuthConfirmPassword('');
+      setAuthSuccessMsg('Master password updated and portal unlocked for fasihmehtab@gmail.com.');
+      loadReservations();
+    } catch (err: any) {
+      setAuthError(err.message || 'Password update error.');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
   };
 
   // Handle updating order status
@@ -649,10 +809,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <h2 className="font-serif text-lg font-bold tracking-wide text-white">
                 Dewaan Admin Portal
               </h2>
-              {currentAdmin && (
+              {currentAdmin ? (
                 <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#dfba6c]/15 border border-[#dfba6c]/40 text-[#ebd8ab] font-mono text-[10px]">
                   <Shield className="w-3 h-3 text-[#dfba6c]" />
-                  <span>Master Admin</span>
+                  <span>Master Admin · Single Slot</span>
+                </span>
+              ) : (
+                <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-950/50 border border-rose-500/30 text-rose-300 font-mono text-[10px]">
+                  <Lock className="w-3 h-3 text-rose-400" />
+                  <span>Locked · Single Slot Access</span>
                 </span>
               )}
             </div>
@@ -662,16 +827,43 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="hidden md:flex items-center gap-3 pr-3 border-r border-white/[0.08]">
-            <span className="text-xs text-[#a0a3af]">
-              Administrator: <strong className="text-white font-medium">{currentAdmin.fullName}</strong>
-            </span>
-          </div>
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          {currentAdmin ? (
+            <>
+              <div className="hidden md:flex items-center gap-3 pr-3 border-r border-white/[0.08]">
+                <div className="text-right">
+                  <div className="text-xs text-white font-medium flex items-center gap-1.5 justify-end">
+                    <span>{currentAdmin.fullName}</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  </div>
+                  <span className="text-[10px] font-mono text-[#dfba6c] block">
+                    {currentAdmin.email}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/30 text-xs text-rose-300 hover:text-white transition-all font-medium cursor-pointer"
+                title="Lock admin portal and sign out immediately"
+              >
+                <Lock className="w-3.5 h-3.5 text-rose-400" />
+                <span className="hidden sm:inline">Lock & Sign Out</span>
+                <span className="sm:hidden">Lock</span>
+              </button>
+            </>
+          ) : (
+            <div className="hidden sm:flex items-center gap-2 pr-3 border-r border-white/[0.08]">
+              <span className="text-xs text-[#8c8e96] font-mono">
+                Locked to: <strong className="text-[#ebd8ab]">{AUTHORIZED_MASTER_ADMIN_EMAIL}</strong>
+              </span>
+            </div>
+          )}
 
           <button
             onClick={onClose}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white transition-all font-medium"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white transition-all font-medium cursor-pointer"
           >
             <span>Exit Portal</span>
             <X className="w-4 h-4" />
@@ -683,9 +875,410 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         {/* ========================================================================= */}
-        {/* ADMIN DASHBOARD - DIRECT ACCESS WITHOUT AUTH BARRIER                       */}
+        {/* CONDITIONAL: LOCK SCREEN (UNAUTHENTICATED) VS AUTHENTICATED DASHBOARD      */}
         {/* ========================================================================= */}
-        <div className="space-y-6">
+        {!currentAdmin ? (
+          <div className="max-w-xl mx-auto py-6 sm:py-10 animate-in fade-in duration-300">
+            <div className="relative rounded-3xl bg-[#111319]/95 border border-white/[0.12] p-6 sm:p-9 shadow-2xl backdrop-blur-xl overflow-hidden">
+              {/* Subtle atmospheric gold & emerald glows */}
+              <div className="absolute -top-24 -left-24 w-56 h-56 bg-[#dfba6c]/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-24 -right-24 w-56 h-56 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+              {/* Header of Lock Card */}
+              <div className="relative text-center mb-6">
+                <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-[#dfba6c]/20 to-[#99732b]/20 border border-[#dfba6c]/40 flex items-center justify-center text-[#dfba6c] shadow-lg mb-4">
+                  <Lock className="w-8 h-8 stroke-[2.2]" />
+                </div>
+                <h3 className="font-serif text-2xl font-bold text-white tracking-wide">
+                  Admin Portal Gatekeeper
+                </h3>
+                <p className="text-xs text-[#8c8e96] mt-1 font-mono">
+                  Single Master Admin Slot · Strict Access Lock
+                </p>
+
+                <div className="flex flex-wrap items-center justify-center gap-2 mt-3.5">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#dfba6c]/15 border border-[#dfba6c]/40 text-[#ebd8ab] font-mono text-[11px]">
+                    <Shield className="w-3.5 h-3.5 text-[#dfba6c]" />
+                    <span>Authorized Owner: {AUTHORIZED_MASTER_ADMIN_EMAIL}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-950/50 border border-rose-500/30 text-rose-300 font-mono text-[10px]">
+                    <Lock className="w-3 h-3 text-rose-400" />
+                    <span>Single Slot Only</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Visitor Notice Banner */}
+              <div className="relative mb-6 p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] text-left">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-4 h-4 text-[#dfba6c] shrink-0 mt-0.5" />
+                  <div className="text-[11px] leading-relaxed text-[#a0a3af]">
+                    <strong className="text-white font-medium block mb-0.5">
+                      Notice for Website Visitors:
+                    </strong>
+                    This management dashboard is private and strictly locked to restaurant owner{' '}
+                    <span className="text-[#ebd8ab] font-mono font-semibold">{AUTHORIZED_MASTER_ADMIN_EMAIL}</span>.
+                    Public guests can freely browse dishes, reserve tables, and place orders without logging in.
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between">
+                  <span className="text-[10px] text-[#71747e] font-mono">
+                    Visiting as a guest or diner?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    <span>Return to Menu</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Auth Card Forms */}
+              {isCheckingSlot ? (
+                <div className="py-8 flex flex-col items-center justify-center gap-3 text-center">
+                  <RefreshCw className="w-6 h-6 text-[#dfba6c] animate-spin" />
+                  <span className="text-xs font-mono text-[#8c8e96]">
+                    Verifying master slot state in Supabase...
+                  </span>
+                </div>
+              ) : isResetMode ? (
+                /* RESET / UPDATE PASSWORD MODE */
+                <form onSubmit={handleResetPassword} className="space-y-4">
+                  <div className="border-b border-white/[0.08] pb-3 mb-4">
+                    <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Key className="w-4 h-4 text-[#dfba6c]" />
+                      <span>Update Master Password</span>
+                    </h4>
+                    <p className="text-[11px] text-[#8c8e96] mt-0.5">
+                      Set a new secure password for {AUTHORIZED_MASTER_ADMIN_EMAIL}.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#8c8e96] mb-1.5 uppercase tracking-wider">
+                      Authorized Owner Email
+                    </label>
+                    <input
+                      type="text"
+                      value={AUTHORIZED_MASTER_ADMIN_EMAIL}
+                      disabled
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/[0.08] text-white font-mono text-xs opacity-75 cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#8c8e96] mb-1.5 uppercase tracking-wider">
+                      New Master Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        placeholder="Enter new master password (min 4 chars)"
+                        required
+                        className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-black/40 border border-white/[0.12] focus:border-[#dfba6c] focus:outline-none text-white text-xs placeholder:text-[#555]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71747e] hover:text-white"
+                      >
+                        {showPassword ? <Eye className="w-4 h-4" /> : <Eye className="w-4 h-4 opacity-50" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#8c8e96] mb-1.5 uppercase tracking-wider">
+                      Confirm New Master Password
+                    </label>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={authConfirmPassword}
+                      onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                      placeholder="Confirm new password"
+                      required
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/[0.12] focus:border-[#dfba6c] focus:outline-none text-white text-xs placeholder:text-[#555]"
+                    />
+                  </div>
+
+                  {authError && (
+                    <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{authError}</span>
+                    </div>
+                  )}
+
+                  {authSuccessMsg && (
+                    <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{authSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  <div className="pt-2 flex items-center gap-3">
+                    <button
+                      type="submit"
+                      disabled={isSubmittingAuth}
+                      className="flex-1 py-3 px-4 rounded-xl bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {isSubmittingAuth ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      <span>Save New Password & Unlock</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsResetMode(false);
+                        setAuthError(null);
+                        setAuthPassword('');
+                        setAuthConfirmPassword('');
+                      }}
+                      className="py-3 px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : isSlotClaimed ? (
+                /* LOGIN / UNLOCK MODE */
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div className="border-b border-white/[0.08] pb-3 mb-4 flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                        <Key className="w-4 h-4 text-[#dfba6c]" />
+                        <span>Unlock Master Admin</span>
+                      </h4>
+                      <p className="text-[11px] text-[#8c8e96] mt-0.5">
+                        Enter master password for {AUTHORIZED_MASTER_ADMIN_EMAIL}.
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 font-mono text-[10px]">
+                      Slot Active
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#8c8e96] mb-1.5 uppercase tracking-wider">
+                      Owner Email (Single Slot)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="email"
+                        value={AUTHORIZED_MASTER_ADMIN_EMAIL}
+                        disabled
+                        className="w-full px-3.5 py-2.5 pl-9 rounded-xl bg-black/40 border border-white/[0.08] text-white font-mono text-xs opacity-80 cursor-not-allowed"
+                      />
+                      <Mail className="w-4 h-4 text-[#dfba6c] absolute left-3 top-1/2 -translate-y-1/2" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[11px] font-mono text-[#8c8e96] uppercase tracking-wider">
+                        Master Password
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsResetMode(true);
+                          setAuthError(null);
+                          setAuthPassword('');
+                          setAuthConfirmPassword('');
+                        }}
+                        className="text-[11px] text-[#dfba6c] hover:underline cursor-pointer"
+                      >
+                        Reset / Set New Password
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        placeholder="Enter master password"
+                        autoFocus
+                        required
+                        className="w-full px-3.5 py-2.5 pr-10 pl-9 rounded-xl bg-black/40 border border-white/[0.12] focus:border-[#dfba6c] focus:outline-none text-white text-xs placeholder:text-[#555]"
+                      />
+                      <Lock className="w-4 h-4 text-[#71747e] absolute left-3 top-1/2 -translate-y-1/2" />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71747e] hover:text-white cursor-pointer"
+                      >
+                        {showPassword ? <Eye className="w-4 h-4" /> : <Eye className="w-4 h-4 opacity-50" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {authError && (
+                    <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{authError}</span>
+                    </div>
+                  )}
+
+                  {authSuccessMsg && (
+                    <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{authSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingAuth}
+                    className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-[#dfba6c] to-[#99732b] hover:from-[#ebd8ab] hover:to-[#b38634] text-[#090a0d] font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-[#dfba6c]/15 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingAuth ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Verifying Credentials...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-4 h-4" />
+                        <span>Unlock Admin Portal & Enter Dashboard</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+              ) : (
+                /* INITIALIZE SINGLE SLOT CLAIM MODE */
+                <form onSubmit={handleRegisterSlot} className="space-y-4">
+                  <div className="border-b border-white/[0.08] pb-3 mb-4">
+                    <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-[#dfba6c]" />
+                      <span>Setup Single Master Admin Slot</span>
+                    </h4>
+                    <p className="text-[11px] text-[#8c8e96] mt-0.5">
+                      The single master slot is reserved for {AUTHORIZED_MASTER_ADMIN_EMAIL}. Setup your master password to lock the portal.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#8c8e96] mb-1.5 uppercase tracking-wider">
+                      Owner Name
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={authFullName}
+                        onChange={(e) => setAuthFullName(e.target.value)}
+                        placeholder="Fasih Mehtab"
+                        required
+                        className="w-full px-3.5 py-2.5 pl-9 rounded-xl bg-black/40 border border-white/[0.12] focus:border-[#dfba6c] focus:outline-none text-white text-xs"
+                      />
+                      <User className="w-4 h-4 text-[#71747e] absolute left-3 top-1/2 -translate-y-1/2" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#8c8e96] mb-1.5 uppercase tracking-wider">
+                      Owner Email (Locked)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="email"
+                        value={AUTHORIZED_MASTER_ADMIN_EMAIL}
+                        disabled
+                        className="w-full px-3.5 py-2.5 pl-9 rounded-xl bg-black/40 border border-white/[0.08] text-white font-mono text-xs opacity-80 cursor-not-allowed"
+                      />
+                      <Mail className="w-4 h-4 text-[#dfba6c] absolute left-3 top-1/2 -translate-y-1/2" />
+                    </div>
+                    <span className="text-[10px] text-[#8c8e96] font-mono mt-1 block">
+                      Strictly locked: No other email can claim this slot.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#8c8e96] mb-1.5 uppercase tracking-wider">
+                      Create Master Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        placeholder="Choose a strong password (min 4 chars)"
+                        required
+                        className="w-full px-3.5 py-2.5 pr-10 pl-9 rounded-xl bg-black/40 border border-white/[0.12] focus:border-[#dfba6c] focus:outline-none text-white text-xs placeholder:text-[#555]"
+                      />
+                      <Key className="w-4 h-4 text-[#71747e] absolute left-3 top-1/2 -translate-y-1/2" />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71747e] hover:text-white cursor-pointer"
+                      >
+                        {showPassword ? <Eye className="w-4 h-4" /> : <Eye className="w-4 h-4 opacity-50" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#8c8e96] mb-1.5 uppercase tracking-wider">
+                      Confirm Master Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={authConfirmPassword}
+                        onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                        placeholder="Confirm master password"
+                        required
+                        className="w-full px-3.5 py-2.5 pl-9 rounded-xl bg-black/40 border border-white/[0.12] focus:border-[#dfba6c] focus:outline-none text-white text-xs placeholder:text-[#555]"
+                      />
+                      <Key className="w-4 h-4 text-[#71747e] absolute left-3 top-1/2 -translate-y-1/2" />
+                    </div>
+                  </div>
+
+                  {authError && (
+                    <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{authError}</span>
+                    </div>
+                  )}
+
+                  {authSuccessMsg && (
+                    <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{authSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingAuth}
+                    className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-[#dfba6c] to-[#99732b] hover:from-[#ebd8ab] hover:to-[#b38634] text-[#090a0d] font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingAuth ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Securing Master Slot...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Shield className="w-4 h-4" />
+                        <span>Claim Single Slot & Lock Portal</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+              )}
+
+              {/* Footer Info */}
+              <div className="mt-6 pt-4 border-t border-white/[0.06] flex items-center justify-between text-[11px] font-mono text-[#636674]">
+                <span>Single-Slot Security</span>
+                <span>{AUTHORIZED_MASTER_ADMIN_EMAIL}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-6">
             
             {/* Metric Overview Bento Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -1752,6 +2345,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             )}
 
           </div>
+        )}
 
       </div>
 

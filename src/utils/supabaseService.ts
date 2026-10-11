@@ -419,9 +419,13 @@ export interface AdminUser {
 const LOCAL_ADMIN_SLOT_KEY = 'dewaan_master_admin_v1';
 const LOCAL_ADMIN_SESSION_KEY = 'dewaan_admin_session_v1';
 
+export const AUTHORIZED_MASTER_ADMIN_EMAIL = 'fasihmehtab@gmail.com';
+export const AUTHORIZED_MASTER_ADMIN_NAME = 'Fasih Mehtab';
+
 /**
  * Checks if the single admin slot is already claimed.
  * Returns true if master admin already exists in Supabase or local storage.
+ * Strictly checks for the authorized owner: fasihmehtab@gmail.com
  */
 export async function checkAdminSlotClaimed(): Promise<{ claimed: boolean; adminUser?: AdminUser }> {
   // Check local backup first
@@ -429,29 +433,33 @@ export async function checkAdminSlotClaimed(): Promise<{ claimed: boolean; admin
     const localRaw = localStorage.getItem(LOCAL_ADMIN_SLOT_KEY);
     if (localRaw) {
       const parsed = JSON.parse(localRaw);
-      if (parsed && parsed.username) {
+      if (parsed && parsed.email?.toLowerCase() === AUTHORIZED_MASTER_ADMIN_EMAIL.toLowerCase()) {
         return {
           claimed: true,
           adminUser: {
-            id: parsed.id || 'master_admin_1',
-            username: parsed.username,
-            email: parsed.email,
-            fullName: parsed.fullName || parsed.full_name || 'Master Admin',
+            id: parsed.id || 'master_admin_fasih',
+            username: parsed.username || 'fasihmehtab',
+            email: AUTHORIZED_MASTER_ADMIN_EMAIL,
+            fullName: parsed.fullName || parsed.full_name || AUTHORIZED_MASTER_ADMIN_NAME,
             role: 'master_admin',
             createdAt: parsed.createdAt || parsed.created_at || new Date().toISOString(),
           },
         };
+      } else {
+        // Invalidate unauthorized local entry
+        localStorage.removeItem(LOCAL_ADMIN_SLOT_KEY);
       }
     }
   } catch (e) {
     console.error(e);
   }
 
-  // Check Supabase admin_users table
+  // Check Supabase admin_users table for fasihmehtab@gmail.com
   try {
     const { data, error } = await supabase
       .from('admin_users')
       .select('id, username, email, full_name, role, created_at')
+      .eq('email', AUTHORIZED_MASTER_ADMIN_EMAIL)
       .limit(1);
 
     if (!error && data && data.length > 0) {
@@ -460,7 +468,7 @@ export async function checkAdminSlotClaimed(): Promise<{ claimed: boolean; admin
         id: row.id,
         username: row.username,
         email: row.email,
-        fullName: row.full_name,
+        fullName: row.full_name || AUTHORIZED_MASTER_ADMIN_NAME,
         role: 'master_admin',
         createdAt: row.created_at,
       };
@@ -481,40 +489,53 @@ export async function checkAdminSlotClaimed(): Promise<{ claimed: boolean; admin
 
 /**
  * Registers the single master admin slot.
- * If already claimed, rejects immediately.
+ * Exclusively restricted to fasihmehtab@gmail.com.
+ * If already claimed or unauthorized email, rejects immediately.
  */
 export async function registerMasterAdminSlot(params: {
-  username: string;
+  username?: string;
   email: string;
-  fullName: string;
+  fullName?: string;
   password: string;
 }): Promise<{ success: boolean; user?: AdminUser; error?: string }> {
+  const cleanEmail = params.email.trim().toLowerCase();
+  if (cleanEmail !== AUTHORIZED_MASTER_ADMIN_EMAIL.toLowerCase()) {
+    return {
+      success: false,
+      error: `Access Denied: The single master admin slot is strictly locked to ${AUTHORIZED_MASTER_ADMIN_EMAIL}. No other accounts are permitted.`,
+    };
+  }
+
   const currentStatus = await checkAdminSlotClaimed();
   if (currentStatus.claimed) {
     return {
       success: false,
-      error: 'The single master admin slot has already been claimed. Registration is permanently locked.',
+      error: 'The single master admin slot has already been claimed for fasihmehtab@gmail.com. Please unlock using your master password.',
     };
   }
 
-  const cleanUsername = params.username.trim().toLowerCase();
-  const cleanEmail = params.email.trim().toLowerCase();
-  const cleanFullName = params.fullName.trim();
+  const cleanUsername = (params.username || 'fasihmehtab').trim().toLowerCase();
+  const cleanFullName = (params.fullName || AUTHORIZED_MASTER_ADMIN_NAME).trim();
+  const cleanPassword = params.password.trim();
 
-  if (!cleanUsername || !cleanEmail || !params.password.trim()) {
-    return { success: false, error: 'All fields are required.' };
+  if (!cleanPassword) {
+    return { success: false, error: 'A secure master password is required.' };
   }
 
-  const id = 'master_admin_1';
+  if (cleanPassword.length < 4) {
+    return { success: false, error: 'Password must be at least 4 characters long.' };
+  }
+
+  const id = 'master_admin_fasih';
   const createdAt = new Date().toISOString();
 
   const adminRecord = {
     id,
     created_at: createdAt,
     username: cleanUsername,
-    email: cleanEmail,
-    full_name: cleanFullName || 'Master Administrator',
-    password_hash: params.password, // hashed/stored for master admin
+    email: AUTHORIZED_MASTER_ADMIN_EMAIL,
+    full_name: cleanFullName,
+    password_hash: cleanPassword, // stored for master admin validation
     role: 'master_admin',
     is_locked: true,
   };
@@ -536,14 +557,14 @@ export async function registerMasterAdminSlot(params: {
   const user: AdminUser = {
     id,
     username: cleanUsername,
-    email: cleanEmail,
-    fullName: cleanFullName || 'Master Administrator',
+    email: AUTHORIZED_MASTER_ADMIN_EMAIL,
+    fullName: cleanFullName,
     role: 'master_admin',
     createdAt,
   };
 
   try {
-    localStorage.setItem(LOCAL_ADMIN_SLOT_KEY, JSON.stringify({ ...adminRecord, password: params.password }));
+    localStorage.setItem(LOCAL_ADMIN_SLOT_KEY, JSON.stringify({ ...adminRecord, password: cleanPassword }));
     localStorage.setItem(LOCAL_ADMIN_SESSION_KEY, JSON.stringify(user));
   } catch (e) {
     console.error(e);
@@ -553,7 +574,8 @@ export async function registerMasterAdminSlot(params: {
 }
 
 /**
- * Authenticates admin credentials
+ * Authenticates admin credentials for the single slot.
+ * Strictly verifies fasihmehtab@gmail.com.
  */
 export async function authenticateAdmin(
   identifier: string,
@@ -561,6 +583,18 @@ export async function authenticateAdmin(
 ): Promise<{ success: boolean; user?: AdminUser; error?: string }> {
   const cleanId = identifier.trim().toLowerCase();
   const cleanPass = passwordAttempt.trim();
+
+  // Validate that identifier belongs strictly to the owner
+  if (
+    cleanId !== AUTHORIZED_MASTER_ADMIN_EMAIL.toLowerCase() &&
+    cleanId !== 'fasihmehtab' &&
+    cleanId !== 'fasih'
+  ) {
+    return {
+      success: false,
+      error: `Access Denied: This admin portal is strictly locked to ${AUTHORIZED_MASTER_ADMIN_EMAIL}. Website visitors and unauthorized accounts cannot log in.`,
+    };
+  }
 
   // Check local storage record
   let matched = false;
@@ -571,7 +605,8 @@ export async function authenticateAdmin(
     if (localRaw) {
       const parsed = JSON.parse(localRaw);
       if (
-        (parsed.username?.toLowerCase() === cleanId || parsed.email?.toLowerCase() === cleanId) &&
+        (parsed.email?.toLowerCase() === AUTHORIZED_MASTER_ADMIN_EMAIL.toLowerCase() ||
+         parsed.username?.toLowerCase() === cleanId) &&
         (parsed.password === cleanPass || parsed.password_hash === cleanPass)
       ) {
         matched = true;
@@ -582,13 +617,13 @@ export async function authenticateAdmin(
     console.error(e);
   }
 
-  // If not matched locally, query Supabase
+  // If not matched locally, query Supabase for fasihmehtab@gmail.com
   if (!matched) {
     try {
       const { data, error } = await supabase
         .from('admin_users')
         .select('*')
-        .or(`username.eq.${cleanId},email.eq.${cleanId}`)
+        .eq('email', AUTHORIZED_MASTER_ADMIN_EMAIL)
         .limit(1);
 
       if (!error && data && data.length > 0) {
@@ -604,14 +639,14 @@ export async function authenticateAdmin(
   }
 
   if (!matched || !adminData) {
-    return { success: false, error: 'Invalid admin username/email or password.' };
+    return { success: false, error: 'Incorrect master password. Access denied.' };
   }
 
   const user: AdminUser = {
-    id: adminData.id || 'master_admin_1',
-    username: adminData.username,
-    email: adminData.email,
-    fullName: adminData.full_name || adminData.fullName || 'Master Administrator',
+    id: adminData.id || 'master_admin_fasih',
+    username: adminData.username || 'fasihmehtab',
+    email: AUTHORIZED_MASTER_ADMIN_EMAIL,
+    fullName: adminData.full_name || adminData.fullName || AUTHORIZED_MASTER_ADMIN_NAME,
     role: 'master_admin',
     createdAt: adminData.created_at || adminData.createdAt || new Date().toISOString(),
   };
@@ -627,20 +662,75 @@ export async function authenticateAdmin(
 }
 
 /**
- * Get current logged in admin session
+ * Updates or resets the master admin password for fasihmehtab@gmail.com
+ */
+export async function updateMasterAdminPassword(
+  newPassword: string
+): Promise<{ success: boolean; user?: AdminUser; error?: string }> {
+  const cleanPass = newPassword.trim();
+  if (cleanPass.length < 4) {
+    return { success: false, error: 'Password must be at least 4 characters long.' };
+  }
+
+  const id = 'master_admin_fasih';
+  const updatedRecord = {
+    id,
+    email: AUTHORIZED_MASTER_ADMIN_EMAIL,
+    username: 'fasihmehtab',
+    full_name: AUTHORIZED_MASTER_ADMIN_NAME,
+    password_hash: cleanPass,
+    role: 'master_admin',
+    is_locked: true,
+  };
+
+  try {
+    await supabase.from('admin_users').upsert([updatedRecord], { onConflict: 'id' });
+  } catch (e) {
+    console.warn('[Supabase Password Update]', e);
+  }
+
+  const user: AdminUser = {
+    id,
+    username: 'fasihmehtab',
+    email: AUTHORIZED_MASTER_ADMIN_EMAIL,
+    fullName: AUTHORIZED_MASTER_ADMIN_NAME,
+    role: 'master_admin',
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    localStorage.setItem(LOCAL_ADMIN_SLOT_KEY, JSON.stringify({ ...updatedRecord, password: cleanPass }));
+    localStorage.setItem(LOCAL_ADMIN_SESSION_KEY, JSON.stringify(user));
+  } catch (e) {
+    console.error(e);
+  }
+
+  return { success: true, user };
+}
+
+/**
+ * Get current logged in admin session.
+ * Strictly verifies that the session email is fasihmehtab@gmail.com.
+ * If any invalid session exists, it is instantly purged.
  */
 export function getCurrentAdminSession(): AdminUser | null {
   try {
     const raw = localStorage.getItem(LOCAL_ADMIN_SESSION_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.email?.toLowerCase() === AUTHORIZED_MASTER_ADMIN_EMAIL.toLowerCase()) {
+      return parsed;
+    }
+    // Invalidate non-owner session
+    localStorage.removeItem(LOCAL_ADMIN_SESSION_KEY);
+    return null;
   } catch {
     return null;
   }
 }
 
 /**
- * Logs out the admin session
+ * Logs out the admin session and re-locks the portal
  */
 export function logoutAdminSession(): void {
   try {

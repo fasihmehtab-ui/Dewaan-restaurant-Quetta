@@ -81,8 +81,8 @@ export const Footer: React.FC<FooterProps> = ({
                   onClick={onOpenAdminPortal}
                   className="inline-flex items-center gap-1.5 text-[#dfba6c] hover:text-[#ebd8ab] transition-colors font-medium"
                 >
-                  <Shield className="w-3.5 h-3.5" />
-                  <span>Admin Sign-Up / Login</span>
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Owner Admin Portal (Locked)</span>
                 </button>
               </li>
             </ul>
@@ -164,7 +164,7 @@ export const Footer: React.FC<FooterProps> = ({
               className="inline-flex items-center gap-1 text-[#8c8e96] hover:text-[#dfba6c] transition-colors"
             >
               <Lock className="w-3 h-3 text-[#dfba6c]" />
-              <span>Admin Portal</span>
+              <span>Owner Portal (Single Slot)</span>
             </button>
             <span aria-hidden="true" className="text-white/10">·</span>
             <span>Authentic Awadhi & Mughlai Gastronomy</span>
