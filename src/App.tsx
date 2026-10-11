@@ -10,7 +10,6 @@ import { TableReservationModal } from './components/TableReservationModal';
 import { SupabaseStatusModal } from './components/SupabaseStatusModal';
 import { AdminPortal } from './components/AdminPortal';
 import { CustomerAuthModal } from './components/CustomerAuthModal';
-import { WelcomeAuthModal } from './components/WelcomeAuthModal';
 import CustomOrderForm from './components/CustomOrderForm';
 import FloatingButtons from './components/FloatingButtons';
 import WhatsAppCenterButton from './components/WhatsAppCenterButton';
@@ -28,7 +27,6 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<CustomerUser | null>(() => getCurrentCustomerSession());
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup' | 'profile'>('signin');
-  const [isWelcomeModalOpen, setIsWelcomeModalOpen] = useState(false);
   const [cartItems, setCartItems] = useState<CartItem[]>(() => {
     try {
       const stored = localStorage.getItem('dewaan_cart_v1');
@@ -61,22 +59,6 @@ export default function App() {
     }
   }, [cartItems]);
 
-  // Check visitor session on initial arrival
-  useEffect(() => {
-    try {
-      const hasSeen = sessionStorage.getItem('dewaan_welcome_seen_v1');
-      const session = getCurrentCustomerSession();
-      if (!session && !hasSeen) {
-        const timer = setTimeout(() => {
-          setIsWelcomeModalOpen(true);
-          sessionStorage.setItem('dewaan_welcome_seen_v1', 'true');
-        }, 800);
-        return () => clearTimeout(timer);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
 
   // Purge any stale dummy DW-8942 order and fetch real orders from Supabase on startup
   useEffect(() => {
@@ -408,21 +390,6 @@ export default function App() {
         />
       )}
 
-      {/* Visitor Arrival Welcome & Auth Prompt */}
-      {isWelcomeModalOpen && !currentUser && (
-        <WelcomeAuthModal
-          isOpen={isWelcomeModalOpen}
-          onClose={() => setIsWelcomeModalOpen(false)}
-          onOpenSignIn={() => {
-            setAuthModalMode('signin');
-            setIsAuthModalOpen(true);
-          }}
-          onOpenSignUp={() => {
-            setAuthModalMode('signup');
-            setIsAuthModalOpen(true);
-          }}
-        />
-      )}
 
       {/* Custom Order Modal */}
       {isCustomOrderOpen && (

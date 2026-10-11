@@ -30,6 +30,15 @@ import { supabase, SUPABASE_CONFIG } from '../utils/supabaseClient';
 import { formatPKR } from '../utils/currency';
 import { ManageDishes } from './ManageDishes';
 
+const DEFAULT_MASTER_ADMIN: AdminUser = {
+  id: 'master-admin-01',
+  username: 'admin',
+  email: 'admin@dewaan.com',
+  fullName: 'Master Administrator',
+  role: 'master_admin',
+  createdAt: '2026-01-01T00:00:00.000Z',
+};
+
 interface AdminPortalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -53,24 +62,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const safeOrders = Array.isArray(orders) ? orders : [];
   const safeMenuItems = Array.isArray(menuItems) ? menuItems : [];
 
-  // Auth state
-  const [currentAdmin, setCurrentAdmin] = useState<AdminUser | null>(() => getCurrentAdminSession());
-  const [slotClaimed, setSlotClaimed] = useState<boolean>(true);
-  const [authLoading, setAuthLoading] = useState<boolean>(true);
-
-  // Form states for login / registration
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [regFullName, setRegFullName] = useState('');
-  const [regUsername, setRegUsername] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [regConfirmPassword, setRegConfirmPassword] = useState('');
-  
-  const [loginIdentifier, setLoginIdentifier] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [authSuccess, setAuthSuccess] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Admin session - direct access with zero authentication barrier
+  const [currentAdmin, setCurrentAdmin] = useState<AdminUser>(() => getCurrentAdminSession() || DEFAULT_MASTER_ADMIN);
 
   // Active admin tab
   const [activeTab, setActiveTab] = useState<'orders' | 'manage_dishes' | 'reservations' | 'customers' | 'menu_pricing' | 'courier'>('orders');
@@ -156,29 +149,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [catalogCmdOutput, setCatalogCmdOutput] = useState<string | null>(null);
   const [copiedCatalogJson, setCopiedCatalogJson] = useState(false);
 
-  // Check admin slot on mount or when opening
+  // Ensure master admin session is active on mount
   useEffect(() => {
     if (!isOpen) return;
 
     let mounted = true;
-    setAuthLoading(true);
-
-    checkAdminSlotClaimed().then((res) => {
-      if (!mounted) return;
-      setSlotClaimed(res.claimed);
-      if (!res.claimed) {
-        setAuthMode('register');
-      } else {
-        setAuthMode('login');
-      }
-      setAuthLoading(false);
-    });
-
-    // Check existing session
-    const session = getCurrentAdminSession();
-    if (session) {
-      setCurrentAdmin(session);
-    }
+    const session = getCurrentAdminSession() || DEFAULT_MASTER_ADMIN;
+    setCurrentAdmin(session);
 
     // Load reservations
     loadReservations();
@@ -248,69 +225,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     const data = await fetchReservationsFromSupabase();
     setReservations(data);
     setIsLoadingReservations(false);
-  };
-
-  // Handle Register (Single Slot)
-  const handleRegisterSlot = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-    setAuthSuccess('');
-
-    if (regPassword !== regConfirmPassword) {
-      setAuthError('Passwords do not match.');
-      return;
-    }
-
-    if (regPassword.length < 6) {
-      setAuthError('Password must be at least 6 characters.');
-      return;
-    }
-
-    setIsSubmitting(true);
-    const res = await registerMasterAdminSlot({
-      fullName: regFullName,
-      username: regUsername,
-      email: regEmail,
-      password: regPassword,
-    });
-    setIsSubmitting(false);
-
-    if (!res.success || !res.user) {
-      setAuthError(res.error || 'Failed to claim admin slot.');
-      return;
-    }
-
-    setSlotClaimed(true);
-    setCurrentAdmin(res.user);
-    setAuthSuccess('Master Admin account created! Single slot is now permanently locked.');
-  };
-
-  // Handle Login
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-    setAuthSuccess('');
-    setIsSubmitting(true);
-
-    const res = await authenticateAdmin(loginIdentifier, loginPassword);
-    setIsSubmitting(false);
-
-    if (!res.success || !res.user) {
-      setAuthError(res.error || 'Invalid credentials.');
-      return;
-    }
-
-    setCurrentAdmin(res.user);
-    setAuthSuccess('Logged in as Master Administrator.');
-  };
-
-  // Handle Logout
-  const handleLogout = () => {
-    logoutAdminSession();
-    setCurrentAdmin(null);
-    setLoginPassword('');
-    setAuthSuccess('');
-    setAuthError('');
   };
 
   // Handle updating order status
@@ -749,21 +663,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
-          {currentAdmin && (
-            <div className="hidden md:flex items-center gap-3 pr-3 border-r border-white/[0.08]">
-              <span className="text-xs text-[#a0a3af]">
-                Signed in as <strong className="text-white font-medium">{currentAdmin.fullName}</strong>
-              </span>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] text-xs text-[#8c8e96] hover:text-white transition-colors"
-              >
-                <LogOut className="w-3 h-3" />
-                <span>Logout</span>
-              </button>
-            </div>
-          )}
+          <div className="hidden md:flex items-center gap-3 pr-3 border-r border-white/[0.08]">
+            <span className="text-xs text-[#a0a3af]">
+              Administrator: <strong className="text-white font-medium">{currentAdmin.fullName}</strong>
+            </span>
+          </div>
 
           <button
             onClick={onClose}
@@ -778,229 +682,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        {/* Loading state */}
-        {authLoading ? (
-          <div className="py-24 text-center">
-            <RefreshCw className="w-8 h-8 text-[#dfba6c] animate-spin mx-auto mb-3" />
-            <p className="text-xs font-mono text-[#8c8e96]">Verifying Admin Slot Status...</p>
-          </div>
-        ) : !currentAdmin ? (
-          /* ========================================================================= */
-          /* AUTH SCREEN: SINGLE SLOT REGISTRATION OR LOCKED LOGIN                     */
-          /* ========================================================================= */
-          <div className="max-w-md mx-auto py-12">
-            <div className="bg-[#12141a] border border-white/[0.1] rounded-3xl p-7 sm:p-9 shadow-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-[#dfba6c]/5 rounded-full blur-3xl pointer-events-none" />
-
-              {/* Icon & Eyebrow */}
-              <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-5 text-[#dfba6c] shadow-lg">
-                <Shield className="w-7 h-7" />
-              </div>
-
-              {slotClaimed ? (
-                /* Slot Already Claimed -> Login View Only */
-                <div>
-                  <div className="text-center mb-6">
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/50 border border-emerald-500/40 text-emerald-400 font-mono text-[10px] tracking-wide uppercase mb-2">
-                      <Lock className="w-3 h-3" />
-                      <span>Registration Closed · 1/1 Slot Occupied</span>
-                    </div>
-                    <h3 className="font-serif text-2xl font-medium text-white">
-                      Master Admin Sign In
-                    </h3>
-                    <p className="text-xs text-[#8c8e96] mt-1.5 font-light leading-relaxed">
-                      Single administrator slot has been claimed and locked. Enter your credentials to access live orders & reservations.
-                    </p>
-                  </div>
-
-                  {authError && (
-                    <div className="mb-4 p-3 bg-rose-950/40 border border-rose-800/40 rounded-2xl text-xs text-rose-300 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                      <span>{authError}</span>
-                    </div>
-                  )}
-
-                  <form onSubmit={handleLogin} className="space-y-4 text-xs">
-                    <div>
-                      <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1.5">
-                        Username or Email
-                      </label>
-                      <div className="relative">
-                        <User className="w-3.5 h-3.5 text-[#727581] absolute left-3.5 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          required
-                          value={loginIdentifier}
-                          onChange={(e) => setLoginIdentifier(e.target.value)}
-                          placeholder="admin / email@dewaan.com"
-                          className="w-full pl-9 pr-4 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1.5">
-                        Master Password
-                      </label>
-                      <div className="relative">
-                        <Key className="w-3.5 h-3.5 text-[#727581] absolute left-3.5 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="password"
-                          required
-                          value={loginPassword}
-                          onChange={(e) => setLoginPassword(e.target.value)}
-                          placeholder="••••••••"
-                          className="w-full pl-9 pr-4 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                        />
-                      </div>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full py-3 bg-gradient-to-r from-[#e9c878] via-[#dfba6c] to-[#c59d5f] hover:brightness-110 active:scale-98 text-[#090a0d] font-semibold rounded-full shadow-md shadow-[#dfba6c]/15 transition-all text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Authenticating...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>Sign In to Dashboard</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </div>
-              ) : (
-                /* Slot Free -> First-Time Master Admin Registration (Single Slot Available) */
-                <div>
-                  <div className="text-center mb-6">
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-950/60 border border-amber-500/40 text-amber-300 font-mono text-[10px] tracking-wide uppercase mb-2">
-                      <Sparkles className="w-3 h-3 text-[#dfba6c]" />
-                      <span>Single Slot Available · 1/1</span>
-                    </div>
-                    <h3 className="font-serif text-2xl font-medium text-white">
-                      Setup Master Admin
-                    </h3>
-                    <p className="text-xs text-[#8c8e96] mt-1.5 font-light leading-relaxed">
-                      You are creating the single authorized admin account. After this setup, no further accounts can be created.
-                    </p>
-                  </div>
-
-                  {authError && (
-                    <div className="mb-4 p-3 bg-rose-950/40 border border-rose-800/40 rounded-2xl text-xs text-rose-300 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                      <span>{authError}</span>
-                    </div>
-                  )}
-
-                  <form onSubmit={handleRegisterSlot} className="space-y-3.5 text-xs">
-                    <div>
-                      <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
-                        Full Name
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={regFullName}
-                        onChange={(e) => setRegFullName(e.target.value)}
-                        placeholder="e.g. Master Chef / Owner"
-                        className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
-                        Admin Username
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={regUsername}
-                        onChange={(e) => setRegUsername(e.target.value)}
-                        placeholder="e.g. dewaan_admin"
-                        className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
-                        Admin Email
-                      </label>
-                      <input
-                        type="email"
-                        required
-                        value={regEmail}
-                        onChange={(e) => setRegEmail(e.target.value)}
-                        placeholder="owner@dewaan-dining.com"
-                        className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
-                          Password
-                        </label>
-                        <input
-                          type="password"
-                          required
-                          value={regPassword}
-                          onChange={(e) => setRegPassword(e.target.value)}
-                          placeholder="Min 6 chars"
-                          className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
-                          Confirm Password
-                        </label>
-                        <input
-                          type="password"
-                          required
-                          value={regConfirmPassword}
-                          onChange={(e) => setRegConfirmPassword(e.target.value)}
-                          placeholder="Repeat password"
-                          className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="p-3 bg-[#171922] rounded-xl border border-white/[0.06] text-[11px] text-[#8c8e96] leading-relaxed">
-                      <strong className="text-white font-medium">Permanent Locking Rule:</strong> Creating this account will permanently claim the single slot. Nobody else will ever be able to register.
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full py-3 bg-gradient-to-r from-[#e9c878] via-[#dfba6c] to-[#c59d5f] hover:brightness-110 active:scale-98 text-[#090a0d] font-semibold rounded-full shadow-md shadow-[#dfba6c]/15 transition-all text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Provisioning Account & Locking...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Lock className="w-3.5 h-3.5" />
-                          <span>Create Master Admin & Lock Registration</span>
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </div>
-              )}
-
-            </div>
-          </div>
-        ) : (
-          /* ========================================================================= */
-          /* AUTHENTICATED ADMIN DASHBOARD                                            */
-          /* ========================================================================= */
-          <div className="space-y-6">
+        {/* ========================================================================= */}
+        {/* ADMIN DASHBOARD - DIRECT ACCESS WITHOUT AUTH BARRIER                       */}
+        {/* ========================================================================= */}
+        <div className="space-y-6">
             
             {/* Metric Overview Bento Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -2067,7 +1752,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             )}
 
           </div>
-        )}
 
       </div>
 
