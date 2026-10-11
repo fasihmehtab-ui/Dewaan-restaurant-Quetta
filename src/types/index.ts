@@ -63,8 +63,6 @@ export interface MenuItem {
   urduName?: string;
   category: Category;
   basePrice: number;
-  dailyMarketPrice?: number; // Daily market value updated by admin in Supabase
-  marketPriceNotes?: string; // Reason or daily market rate notes (e.g. Quetta livestock rate)
   isAvailable?: boolean; // Real-time availability
   image: string;
   videoUrl?: string; // Product/dish video (MP4, YouTube embed, or direct video stream)

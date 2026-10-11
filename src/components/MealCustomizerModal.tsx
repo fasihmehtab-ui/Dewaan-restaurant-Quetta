@@ -48,7 +48,7 @@ export const MealCustomizerModal: React.FC<MealCustomizerModalProps> = ({
   };
 
   // Calculate unit price based on customization
-  const activeBasePrice = item.dailyMarketPrice || item.basePrice;
+  const activeBasePrice = item.basePrice;
   const unitPrice =
     activeBasePrice +
     selectedPortion.priceDelta +

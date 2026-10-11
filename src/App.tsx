@@ -109,7 +109,7 @@ export default function App() {
       console.warn('[Supabase Fetch]', err);
     });
 
-    // Fetch dynamic menu items and daily market prices from Supabase
+    // Fetch dynamic menu items from Supabase
     fetchMenuItemsFromSupabase().then((supabaseItems) => {
       if (supabaseItems && supabaseItems.length > 0) {
         setMenuItems((prev) => {
@@ -121,8 +121,6 @@ export default function App() {
               map.set(item.id, {
                 ...existing,
                 ...item,
-                dailyMarketPrice: item.dailyMarketPrice || item.basePrice,
-                marketPriceNotes: item.marketPriceNotes || existing.marketPriceNotes,
                 isAvailable: item.isAvailable !== false,
               });
             } else {

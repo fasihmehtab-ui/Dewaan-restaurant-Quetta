@@ -102,7 +102,7 @@ CREATE POLICY "Allow public select on admin_users"
 CREATE POLICY "Allow public insert on admin_users" 
   ON public.admin_users FOR INSERT WITH CHECK (true);
 
--- 4. Create menu_items table with Daily Market Value Pricing
+-- 4. Create menu_items table
 CREATE TABLE IF NOT EXISTS public.menu_items (
   id TEXT PRIMARY KEY,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -111,8 +111,6 @@ CREATE TABLE IF NOT EXISTS public.menu_items (
   urdu_name TEXT,
   category TEXT NOT NULL,
   base_price NUMERIC(10, 2) NOT NULL,
-  daily_market_price NUMERIC(10, 2) NOT NULL,
-  market_price_notes TEXT DEFAULT 'Daily Quetta market value',
   is_available BOOLEAN DEFAULT true,
   description TEXT,
   culinary_notes TEXT,
@@ -181,6 +179,11 @@ CREATE POLICY "Allow public insert on customer_profiles"
 
 CREATE POLICY "Allow public update on customer_profiles" 
   ON public.customer_profiles FOR UPDATE USING (true);
+
+-- 7. Reset / Clear all dummy products & dishes
+-- آپ کے سارے ڈمی پراڈکٹس ایک ساتھ ڈیلیٹ ہو جائیں گے
+-- DELETE FROM products;
+-- DELETE FROM dishes;
 `;
 
 /**
@@ -648,7 +651,7 @@ export function logoutAdminSession(): void {
 }
 
 /**
- * Fetch all menu items from Supabase with daily market value pricing
+ * Fetch all menu items from Supabase
  */
 export async function fetchMenuItemsFromSupabase(): Promise<any[]> {
   try {
@@ -667,8 +670,6 @@ export async function fetchMenuItemsFromSupabase(): Promise<any[]> {
       urduName: row.urdu_name || undefined,
       category: row.category,
       basePrice: Number(row.base_price),
-      dailyMarketPrice: Number(row.daily_market_price || row.base_price),
-      marketPriceNotes: row.market_price_notes || 'Quetta daily market value',
       isAvailable: row.is_available !== false,
       description: row.description || '',
       culinaryNotes: row.culinary_notes || '',
@@ -688,23 +689,19 @@ export async function fetchMenuItemsFromSupabase(): Promise<any[]> {
 }
 
 /**
- * Update daily market price and availability of a dish in Supabase
+ * Update price and availability of a dish in Supabase
  */
-export async function updateDailyMarketPriceInSupabase(
+export async function updateMenuItemPriceInSupabase(
   id: string,
-  dailyMarketPrice: number,
-  marketNotes?: string,
+  price: number,
   isAvailable: boolean = true
 ): Promise<boolean> {
   try {
     const updatePayload: any = {
-      daily_market_price: dailyMarketPrice,
+      base_price: price,
       updated_at: new Date().toISOString(),
       is_available: isAvailable,
     };
-    if (marketNotes !== undefined) {
-      updatePayload.market_price_notes = marketNotes;
-    }
 
     const { error } = await supabase
       .from('menu_items')
@@ -733,8 +730,6 @@ export async function upsertMenuItemInSupabase(item: any): Promise<boolean> {
       urdu_name: item.urduName || null,
       category: item.category,
       base_price: item.basePrice,
-      daily_market_price: item.dailyMarketPrice || item.basePrice,
-      market_price_notes: item.marketPriceNotes || 'Quetta daily market value',
       is_available: item.isAvailable !== false,
       description: item.description || '',
       culinary_notes: item.culinaryNotes || '',
@@ -756,6 +751,31 @@ export async function upsertMenuItemInSupabase(item: any): Promise<boolean> {
     return true;
   } catch (err) {
     console.error('[Supabase Dish Upsert]', err);
+    return false;
+  }
+}
+
+/**
+ * Delete a menu item from Supabase menu_items table
+ */
+export async function deleteMenuItemFromSupabase(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('menu_items')
+      .delete()
+      .eq('id', id);
+
+    // Also remove from products / dishes if present
+    await supabase.from('products').delete().eq('id', id);
+    await supabase.from('dishes').delete().eq('id', id);
+
+    if (error) {
+      console.warn('[Supabase Dish Delete]', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('[Supabase Dish Delete]', err);
     return false;
   }
 }
@@ -1162,4 +1182,21 @@ export async function updateCustomerProfile(
   return updated;
 }
 
+/**
+ * Delete all dummy, fake, or placeholder products from Supabase database
+ * Executes DELETE queries across 'products', 'dishes', and 'Dishes' tables
+ */
+export async function deleteAllDummyProductsFromSupabase(): Promise<{ success: boolean; message: string }> {
+  try {
+    await supabase.from('products').delete().neq('id', '___force_purge_all___');
+    await supabase.from('dishes').delete().neq('id', '___force_purge_all___');
+    await supabase.from('Dishes').delete().neq('id', '___force_purge_all___');
+    try {
+      localStorage.removeItem('dastaan_manage_dishes_list_v2');
+    } catch {}
+    return { success: true, message: 'Successfully deleted all products from Supabase.' };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Failed to delete products' };
+  }
+}
 

@@ -4,7 +4,7 @@ import {
   ShoppingBag, Calendar, Users, Phone, MapPin, Clock, ArrowRight, 
   RefreshCw, LogOut, Search, Filter, ExternalLink, ChevronRight, Check,
   Copy, FileText, Sparkles, Navigation, Layers, Video, Image as ImageIcon,
-  Play, Upload, Film, Eye, Trash2, Camera
+  Play, Upload, Film, Eye, Trash2, Camera, Pencil, Edit3, Plus, Save
 } from 'lucide-react';
 import { Order, OrderStatus, MenuItem, Category } from '../types';
 import { 
@@ -18,8 +18,9 @@ import {
   fetchReservationsFromSupabase,
   updateReservationStatusInSupabase,
   updateOrderInSupabase,
-  updateDailyMarketPriceInSupabase,
+  updateMenuItemPriceInSupabase,
   upsertMenuItemInSupabase,
+  deleteMenuItemFromSupabase,
   fetchCourierGpsTelemetry,
   updateCourierGpsInSupabase,
   QUETTA_BASE_LOCATION,
@@ -74,12 +75,35 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   // Active admin tab
   const [activeTab, setActiveTab] = useState<'orders' | 'manage_dishes' | 'reservations' | 'customers' | 'menu_pricing' | 'courier'>('orders');
 
-  // Daily Menu & Market Pricing state
-  const [priceEdits, setPriceEdits] = useState<Record<string, { price: number; notes: string; isAvailable: boolean }>>({});
-  const [savingPriceId, setSavingPriceId] = useState<string | null>(null);
+  // Menu Catalog & Full Dish Edit state
+  const [dishRowEdits, setDishRowEdits] = useState<Record<string, {
+    name: string;
+    urduName: string;
+    category: Category;
+    price: number;
+    isAvailable: boolean;
+  }>>({});
+  const [savingDishId, setSavingDishId] = useState<string | null>(null);
   const [savedSuccessId, setSavedSuccessId] = useState<string | null>(null);
+  const [deletingDishId, setDeletingDishId] = useState<string | null>(null);
   const [menuSearch, setMenuSearch] = useState('');
   const [menuCatFilter, setMenuCatFilter] = useState<Category | 'all'>('all');
+
+  // Full Edit Dish Modal state (gives full control to edit every dish item and connect to Supabase)
+  const [editingDishModal, setEditingDishModal] = useState<MenuItem | null>(null);
+  const [isSavingEditModal, setIsSavingEditModal] = useState(false);
+  const [editModalName, setEditModalName] = useState('');
+  const [editModalUrdu, setEditModalUrdu] = useState('');
+  const [editModalCategory, setEditModalCategory] = useState<Category>('shawarma');
+  const [editModalPrice, setEditModalPrice] = useState<number>(0);
+  const [editModalDesc, setEditModalDesc] = useState('');
+  const [editModalCulinaryNotes, setEditModalCulinaryNotes] = useState('');
+  const [editModalPrepTime, setEditModalPrepTime] = useState('20-25 min');
+  const [editModalImage, setEditModalImage] = useState('');
+  const [editModalVideo, setEditModalVideo] = useState('');
+  const [editModalAvailable, setEditModalAvailable] = useState(true);
+  const [editModalIngredients, setEditModalIngredients] = useState('');
+  const [editModalStatusMsg, setEditModalStatusMsg] = useState<string | null>(null);
 
   // Add new dish modal state (including Picture & Video)
   const [isAddDishOpen, setIsAddDishOpen] = useState(false);
@@ -88,7 +112,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [newDishCategory, setNewDishCategory] = useState<Category>('shawarma');
   const [newDishPrice, setNewDishPrice] = useState<number>(650);
   const [newDishDesc, setNewDishDesc] = useState('');
-  const [newDishMarketNotes, setNewDishMarketNotes] = useState('Quetta daily market value');
   const [newDishImage, setNewDishImage] = useState('');
   const [newDishImageMode, setNewDishImageMode] = useState<'url' | 'upload' | 'preset'>('preset');
   const [newDishVideo, setNewDishVideo] = useState('');
@@ -160,16 +183,24 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     // Load reservations
     loadReservations();
 
-    // Initialize price edits map
-    const initialEdits: Record<string, { price: number; notes: string; isAvailable: boolean }> = {};
+    // Initialize dish row edits map
+    const initialEdits: Record<string, {
+      name: string;
+      urduName: string;
+      category: Category;
+      price: number;
+      isAvailable: boolean;
+    }> = {};
     safeMenuItems.forEach((m) => {
       initialEdits[m.id] = {
-        price: m.dailyMarketPrice || m.basePrice,
-        notes: m.marketPriceNotes || 'Quetta daily market value',
+        name: m.name,
+        urduName: m.urduName || '',
+        category: m.category,
+        price: m.basePrice,
         isAvailable: m.isAvailable !== false,
       };
     });
-    setPriceEdits(initialEdits);
+    setDishRowEdits(initialEdits);
 
     // Fetch GPS telemetry from Supabase
     fetchCourierGpsTelemetry().then((tel) => {
@@ -446,7 +477,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     return list;
   }, [safeOrders, reservations, customerSearchQuery]);
 
-  // Filtered Menu Items for Daily Pricing Tab
+  // Filtered Menu Items for Pricing Tab
   const filteredMenuItems = useMemo(() => {
     return safeMenuItems.filter((item) => {
       if (menuCatFilter !== 'all' && item.category !== menuCatFilter) {
@@ -464,69 +495,130 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     });
   }, [safeMenuItems, menuCatFilter, menuSearch]);
 
-  const handlePriceChange = (id: string, price: number) => {
-    setPriceEdits((prev) => ({
-      ...prev,
-      [id]: {
-        ...(prev[id] || { notes: 'Quetta daily market value', isAvailable: true }),
-        price,
-      },
-    }));
-  };
-
-  const handleNotesChange = (id: string, notes: string) => {
-    setPriceEdits((prev) => ({
-      ...prev,
-      [id]: {
-        ...(prev[id] || { price: 0, isAvailable: true }),
-        notes,
-      },
-    }));
-  };
-
-  const handleAvailabilityToggle = (id: string) => {
-    setPriceEdits((prev) => {
-      const current = prev[id] || { price: 0, notes: '', isAvailable: true };
+  const handleRowFieldChange = (id: string, field: 'name' | 'urduName' | 'category' | 'price' | 'isAvailable', value: any) => {
+    setDishRowEdits((prev) => {
+      const original = safeMenuItems.find((m) => m.id === id);
+      const current = prev[id] || {
+        name: original?.name || '',
+        urduName: original?.urduName || '',
+        category: original?.category || 'shawarma',
+        price: original?.basePrice || 0,
+        isAvailable: original?.isAvailable !== false,
+      };
       return {
         ...prev,
         [id]: {
           ...current,
-          isAvailable: !current.isAvailable,
+          [field]: value,
         },
       };
     });
   };
 
-  const handleSaveDailyPrice = async (itemId: string) => {
-    const edit = priceEdits[itemId];
-    if (!edit) return;
+  const handleSaveRowDish = async (itemId: string) => {
+    const edit = dishRowEdits[itemId];
+    const original = safeMenuItems.find((m) => m.id === itemId);
+    if (!original) return;
 
-    setSavingPriceId(itemId);
-    const success = await updateDailyMarketPriceInSupabase(
-      itemId,
-      edit.price,
-      edit.notes,
-      edit.isAvailable
-    );
-    setSavingPriceId(null);
+    setSavingDishId(itemId);
+    const updatedDish: MenuItem = {
+      ...original,
+      name: edit ? edit.name.trim() || original.name : original.name,
+      urduName: edit ? edit.urduName.trim() || undefined : original.urduName,
+      category: edit ? edit.category : original.category,
+      basePrice: edit ? Number(edit.price) || original.basePrice : original.basePrice,
+      isAvailable: edit ? edit.isAvailable : original.isAvailable !== false,
+    };
+
+    const success = await upsertMenuItemInSupabase(updatedDish);
+    setSavingDishId(null);
 
     if (success) {
       setSavedSuccessId(itemId);
       setTimeout(() => setSavedSuccessId(null), 2500);
 
-      const updated = menuItems.map((m) => {
-        if (m.id === itemId) {
-          return {
-            ...m,
-            basePrice: edit.price,
-            dailyMarketPrice: edit.price,
-            marketPriceNotes: edit.notes,
-            isAvailable: edit.isAvailable,
-          };
-        }
-        return m;
-      });
-      onUpdateMenuItems(updated);
+      const nextList = safeMenuItems.map((m) => (m.id === itemId ? updatedDish : m));
+      onUpdateMenuItems(nextList);
+    } else {
+      alert('Could not save dish to Supabase table. Please verify internet / Supabase connection.');
+    }
+  };
+
+  const handleDeleteDish = async (dish: MenuItem) => {
+    const confirmed = window.confirm(
+      `کیا آپ واقعی "${dish.name}" کو مینو اور Supabase ڈیٹا بیس سے ڈیلیٹ کرنا چاہتے ہیں؟\nAre you sure you want to permanently delete "${dish.name}" from the menu catalog and Supabase menu_items table?`
+    );
+    if (!confirmed) return;
+
+    setDeletingDishId(dish.id);
+    const success = await deleteMenuItemFromSupabase(dish.id);
+    setDeletingDishId(null);
+
+    if (success) {
+      const nextList = safeMenuItems.filter((m) => m.id !== dish.id);
+      onUpdateMenuItems(nextList);
+      if (editingDishModal?.id === dish.id) {
+        setEditingDishModal(null);
+      }
+    } else {
+      alert(`Could not delete "${dish.name}". Check connection or Supabase permissions.`);
+    }
+  };
+
+  const openEditDishModal = (dish: MenuItem) => {
+    const row = dishRowEdits[dish.id];
+    setEditingDishModal(dish);
+    setEditModalName(row ? row.name : dish.name);
+    setEditModalUrdu(row ? row.urduName : dish.urduName || '');
+    setEditModalCategory(row ? row.category : dish.category);
+    setEditModalPrice(row ? row.price : dish.basePrice);
+    setEditModalDesc(dish.description || '');
+    setEditModalCulinaryNotes(dish.culinaryNotes || '');
+    setEditModalPrepTime(dish.prepTime || '20-25 min');
+    setEditModalImage(dish.image || '');
+    setEditModalVideo(dish.videoUrl || '');
+    setEditModalAvailable(row ? row.isAvailable : dish.isAvailable !== false);
+    setEditModalIngredients(dish.ingredients ? dish.ingredients.join(', ') : '');
+    setEditModalStatusMsg(null);
+  };
+
+  const handleSaveEditDishModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDishModal || !editModalName.trim()) return;
+
+    setIsSavingEditModal(true);
+    setEditModalStatusMsg(null);
+
+    const updatedDish: MenuItem = {
+      ...editingDishModal,
+      name: editModalName.trim(),
+      urduName: editModalUrdu.trim() || undefined,
+      category: editModalCategory,
+      basePrice: Number(editModalPrice) || editingDishModal.basePrice,
+      isAvailable: editModalAvailable,
+      description: editModalDesc.trim(),
+      culinaryNotes: editModalCulinaryNotes.trim() || 'Prepared fresh to order in Quetta.',
+      prepTime: editModalPrepTime.trim() || '20-25 min',
+      image: editModalImage.trim() || editingDishModal.image,
+      videoUrl: editModalVideo.trim() || undefined,
+      ingredients: editModalIngredients
+        ? editModalIngredients.split(',').map((s) => s.trim()).filter(Boolean)
+        : editingDishModal.ingredients,
+    };
+
+    const success = await upsertMenuItemInSupabase(updatedDish);
+    setIsSavingEditModal(false);
+
+    if (success) {
+      setEditModalStatusMsg('Saved to Supabase menu_items table!');
+      const nextList = safeMenuItems.map((m) => (m.id === editingDishModal.id ? updatedDish : m));
+      onUpdateMenuItems(nextList);
+      setTimeout(() => {
+        setEditingDishModal(null);
+        setEditModalStatusMsg(null);
+      }, 700);
+    } else {
+      setEditModalStatusMsg('Failed to update Supabase. Please retry.');
     }
   };
 
@@ -551,10 +643,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       urduName: newDishUrdu.trim() || undefined,
       category: newDishCategory,
       basePrice: newDishPrice,
-      dailyMarketPrice: newDishPrice,
-      marketPriceNotes: newDishMarketNotes.trim() || 'Quetta daily market value',
       isAvailable: true,
-      description: newDishDesc.trim() || `Special fresh ${newDishName} prepared by Dewaan chefs in Quetta.`,
+      description: newDishDesc.trim() || `Fresh ${newDishName} prepared by Dewaan chefs in Quetta.`,
       culinaryNotes: 'Prepared fresh to order in Quetta.',
       ingredients: ['Fresh Meat & Vegetables', 'Pure Spices'],
       spiceLevelDefault: 'medium',
@@ -602,18 +692,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     setSyncAllMsg(null);
     let successCount = 0;
     for (const item of safeMenuItems) {
-      const edit = priceEdits[item.id];
-      const itemToSave = {
+      const edit = dishRowEdits[item.id];
+      const itemToSave: MenuItem = {
         ...item,
-        dailyMarketPrice: edit?.price ?? item.dailyMarketPrice ?? item.basePrice,
-        marketPriceNotes: edit?.notes ?? item.marketPriceNotes ?? 'Quetta daily market value',
-        isAvailable: edit?.isAvailable ?? (item.isAvailable !== false),
+        name: edit ? edit.name.trim() || item.name : item.name,
+        urduName: edit ? edit.urduName.trim() || item.urduName : item.urduName,
+        category: edit ? edit.category : item.category,
+        basePrice: edit ? Number(edit.price) || item.basePrice : item.basePrice,
+        isAvailable: edit ? edit.isAvailable : item.isAvailable !== false,
       };
       const ok = await upsertMenuItemInSupabase(itemToSave);
       if (ok) successCount++;
     }
     setIsSyncingAllDishes(false);
-    setSyncAllMsg(`Successfully synced ${successCount} authentic Quetta dishes with daily market value to Supabase!`);
+    setSyncAllMsg(`Successfully synced ${successCount} authentic Quetta dishes to Supabase!`);
     setTimeout(() => setSyncAllMsg(null), 4000);
   };
 
@@ -1068,7 +1160,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   }`}
                 >
                   <Layers className="w-3.5 h-3.5" />
-                  <span>Daily Menu & Market Prices ({menuItems.length})</span>
+                  <span>Menu Catalog & Prices ({menuItems.length})</span>
                 </button>
 
                 <button
@@ -1528,7 +1620,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             )}
 
             {/* ===================================================================== */}
-            {/* TAB 4: DAILY MENU & MARKET VALUE PRICING (SUPABASE SYNCED)            */}
+            {/* TAB 4: MENU CATALOG & PRICING (SUPABASE SYNCED)                       */}
             {/* ===================================================================== */}
             {activeTab === 'menu_pricing' && (
               <div className="space-y-4">
@@ -1552,7 +1644,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                       disabled={isSyncingAllDishes}
                       onClick={handleSyncAllDishesToSupabase}
                       className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-emerald-600/90 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs shadow-md transition-all"
-                      title="Upload or sync all authentic Quetta dishes and daily prices to Supabase table"
+                      title="Upload or sync all authentic Quetta dishes to Supabase table"
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAllDishes ? 'animate-spin' : ''}`} />
                       <span>{isSyncingAllDishes ? 'Syncing...' : 'Sync All Dishes to Supabase'}</span>
@@ -1576,7 +1668,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             safeMenuItems.map((m) => ({
                               id: m.id,
                               title: m.name,
-                              price: m.dailyMarketPrice || m.basePrice,
+                              price: m.basePrice,
                               isDummy: false,
                             })),
                             null,
@@ -1599,7 +1691,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   </div>
                 )}
 
-                {/* Supabase Column Info Banner */}
+                {/* Supabase Schema Info Banner */}
                 <div className="p-3.5 bg-[#141620] border border-white/[0.08] rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                   <div className="flex items-center gap-2.5">
                     <div className="w-7 h-7 rounded-lg bg-[#dfba6c]/15 text-[#dfba6c] flex items-center justify-center font-mono font-bold text-xs">
@@ -1607,13 +1699,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     </div>
                     <div>
                       <div className="font-semibold text-white flex items-center gap-2">
-                        <span>Supabase Daily Market Value Column</span>
+                        <span>Supabase Menu Catalog Table</span>
                         <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/50 px-2 py-0.5 rounded-full border border-emerald-500/20">
                           table: public.menu_items
                         </span>
                       </div>
                       <span className="text-[11px] text-[#8c8e96] block font-mono">
-                        daily_market_price NUMERIC(10, 2) · market_price_notes TEXT · is_available BOOLEAN
+                        id TEXT · name TEXT · category TEXT · base_price NUMERIC(10, 2) · is_available BOOLEAN
                       </span>
                     </div>
                   </div>
@@ -1621,7 +1713,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const sql = `ALTER TABLE public.menu_items ADD COLUMN IF NOT EXISTS daily_market_price NUMERIC(10, 2) DEFAULT 0;\nALTER TABLE public.menu_items ADD COLUMN IF NOT EXISTS market_price_notes TEXT DEFAULT 'Daily Quetta market value';\nALTER TABLE public.menu_items ADD COLUMN IF NOT EXISTS is_available BOOLEAN DEFAULT true;\nALTER TABLE public.menu_items ADD COLUMN IF NOT EXISTS last_price_updated_at TIMESTAMPTZ DEFAULT NOW();`;
+                      const sql = `ALTER TABLE public.menu_items ADD COLUMN IF NOT EXISTS base_price NUMERIC(10, 2) DEFAULT 0;\nALTER TABLE public.menu_items ADD COLUMN IF NOT EXISTS is_available BOOLEAN DEFAULT true;\nALTER TABLE public.menu_items ADD COLUMN IF NOT EXISTS last_price_updated_at TIMESTAMPTZ DEFAULT NOW();`;
                       navigator.clipboard.writeText(sql);
                       setCopiedSql(true);
                       setTimeout(() => setCopiedSql(false), 2500);
@@ -1669,75 +1761,100 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   ))}
                 </div>
 
-                {/* Dishes Pricing Table */}
+                {/* Dishes Pricing & Management Table */}
                 <div className="bg-[#12141a] border border-white/[0.08] rounded-3xl overflow-hidden shadow-xl">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-[#161822] border-b border-white/[0.08] text-[10px] font-mono uppercase tracking-wider text-[#a0a3af]">
                         <tr>
-                          <th className="py-3.5 px-4">Dish & Category</th>
-                          <th className="py-3.5 px-4">Base Price</th>
-                          <th className="py-3.5 px-4">Daily Market Value (PKR)</th>
-                          <th className="py-3.5 px-4">Market Rate Notes</th>
+                          <th className="py-3.5 px-4">Dish Name & Details</th>
+                          <th className="py-3.5 px-4">Category</th>
+                          <th className="py-3.5 px-4">Price (PKR)</th>
                           <th className="py-3.5 px-4">Availability</th>
-                          <th className="py-3.5 px-4 text-right">Supabase Sync</th>
+                          <th className="py-3.5 px-4 text-right">Actions & Supabase</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/[0.06] text-xs">
                         {filteredMenuItems.map((item) => {
-                          const edit = priceEdits[item.id] || {
-                            price: item.dailyMarketPrice || item.basePrice,
-                            notes: item.marketPriceNotes || 'Quetta daily market value',
+                          const edit = dishRowEdits[item.id] || {
+                            name: item.name,
+                            urduName: item.urduName || '',
+                            category: item.category,
+                            price: item.basePrice,
                             isAvailable: item.isAvailable !== false,
                           };
 
-                          const isSaving = savingPriceId === item.id;
+                          const isSaving = savingDishId === item.id;
                           const isSaved = savedSuccessId === item.id;
+                          const isDeleting = deletingDishId === item.id;
 
                           return (
                             <tr key={item.id} className="hover:bg-white/[0.02] transition-colors">
-                              {/* Dish info & thumbnail */}
+                              {/* Dish info & Name Edit */}
                               <td className="py-3.5 px-4">
                                 <div className="flex items-center gap-3">
-                                  <img
-                                    src={item.image}
-                                    alt={item.name}
-                                    className="w-11 h-11 rounded-xl object-cover border border-white/[0.08] shrink-0"
-                                  />
-                                  <div>
-                                    <span className="font-semibold text-white block">
-                                      {item.name}
-                                    </span>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.05] text-[#dfba6c] capitalize">
-                                        {item.category.replace('_', ' ')}
+                                  <div className="relative group shrink-0">
+                                    <img
+                                      src={item.image}
+                                      alt={item.name}
+                                      className="w-12 h-12 rounded-xl object-cover border border-white/[0.08]"
+                                    />
+                                    {item.videoUrl && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setActiveAdminVideoModal({ url: item.videoUrl!, title: item.name })}
+                                        className="absolute -bottom-1 -right-1 p-1 bg-red-600 rounded-full text-white shadow"
+                                        title="Watch dish video"
+                                      >
+                                        <Play className="w-2.5 h-2.5 fill-current" />
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div className="flex-1 min-w-[180px] space-y-1">
+                                    <input
+                                      type="text"
+                                      value={edit.name}
+                                      onChange={(e) => handleRowFieldChange(item.id, 'name', e.target.value)}
+                                      placeholder="Dish Name"
+                                      className="w-full font-semibold text-white bg-transparent border-b border-transparent hover:border-white/20 focus:border-[#dfba6c] focus:bg-[#181a24] rounded px-1.5 py-0.5 text-xs transition-colors focus:outline-none"
+                                      title="Click to edit dish name"
+                                    />
+                                    <div className="flex items-center gap-2">
+                                      <input
+                                        type="text"
+                                        value={edit.urduName}
+                                        onChange={(e) => handleRowFieldChange(item.id, 'urduName', e.target.value)}
+                                        placeholder="اردو نام درج کریں"
+                                        className="w-32 text-[11px] font-serif text-[#ebd8ab]/80 bg-transparent border-b border-transparent hover:border-white/10 focus:border-[#dfba6c] focus:bg-[#181a24] rounded px-1 py-0.5 transition-colors focus:outline-none"
+                                        title="Click to edit Urdu name"
+                                      />
+                                      <span className="text-[9px] font-mono text-[#71747d] uppercase">
+                                        ID: {item.id}
                                       </span>
-                                      {item.urduName && (
-                                        <span className="text-[11px] font-serif text-[#ebd8ab]/80">
-                                          {item.urduName}
-                                        </span>
-                                      )}
-                                      {item.videoUrl && (
-                                        <button
-                                          type="button"
-                                          onClick={() => setActiveAdminVideoModal({ url: item.videoUrl!, title: item.name })}
-                                          className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-red-950/60 border border-red-500/30 text-red-300 hover:bg-red-900/60 transition-colors"
-                                        >
-                                          <Play className="w-2.5 h-2.5 fill-current" />
-                                          <span>Video</span>
-                                        </button>
-                                      )}
                                     </div>
                                   </div>
                                 </div>
                               </td>
 
-                              {/* Base Price */}
-                              <td className="py-3.5 px-4 font-mono text-[#a0a3af] tabular-nums">
-                                {formatPKR(item.basePrice)}
+                              {/* Category dropdown */}
+                              <td className="py-3.5 px-4">
+                                <select
+                                  value={edit.category}
+                                  onChange={(e) => handleRowFieldChange(item.id, 'category', e.target.value as Category)}
+                                  className="px-2.5 py-1.5 bg-[#171922] border border-white/[0.08] rounded-xl text-xs font-mono text-[#dfba6c] capitalize focus:outline-none focus:border-[#dfba6c]"
+                                >
+                                  <option value="biryani">Biryani</option>
+                                  <option value="karahi">Shinwari Karahi</option>
+                                  <option value="handi">Clay Handi</option>
+                                  <option value="kebab">Chapli & Seekh Kebab</option>
+                                  <option value="shawarma">Arabian Shawarma</option>
+                                  <option value="pizza">Artisan Pizza</option>
+                                  <option value="breads_sides">Tandoor Naan</option>
+                                  <option value="beverages">Drinks & Kahwa</option>
+                                </select>
                               </td>
 
-                              {/* Daily Market Price Input */}
+                              {/* Price Input */}
                               <td className="py-3.5 px-4">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-[11px] font-mono text-[#dfba6c]">Rs.</span>
@@ -1746,64 +1863,78 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                     min={0}
                                     step={10}
                                     value={edit.price}
-                                    onChange={(e) => handlePriceChange(item.id, Number(e.target.value) || 0)}
-                                    className="w-28 px-3 py-1.5 bg-[#171922] border border-white/[0.1] rounded-xl text-xs font-mono font-bold text-white focus:outline-none focus:border-[#dfba6c]"
+                                    onChange={(e) => handleRowFieldChange(item.id, 'price', Number(e.target.value) || 0)}
+                                    className="w-24 px-2.5 py-1.5 bg-[#171922] border border-white/[0.1] rounded-xl text-xs font-mono font-bold text-white focus:outline-none focus:border-[#dfba6c]"
                                   />
                                 </div>
-                              </td>
-
-                              {/* Market Notes Input */}
-                              <td className="py-3.5 px-4">
-                                <input
-                                  type="text"
-                                  value={edit.notes}
-                                  onChange={(e) => handleNotesChange(item.id, e.target.value)}
-                                  placeholder="e.g. Quetta meat rate"
-                                  className="w-48 px-3 py-1.5 bg-[#171922] border border-white/[0.08] rounded-xl text-xs text-[#ebd8ab] placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                                />
                               </td>
 
                               {/* Availability Switch */}
                               <td className="py-3.5 px-4">
                                 <button
                                   type="button"
-                                  onClick={() => handleAvailabilityToggle(item.id)}
-                                  className={`px-3 py-1 rounded-full text-[11px] font-mono transition-colors ${
+                                  onClick={() => handleRowFieldChange(item.id, 'isAvailable', !edit.isAvailable)}
+                                  className={`px-3 py-1.5 rounded-full text-[11px] font-mono transition-colors ${
                                     edit.isAvailable
                                       ? 'bg-emerald-950/50 border border-emerald-500/40 text-emerald-400'
                                       : 'bg-rose-950/50 border border-rose-800/40 text-rose-300'
                                   }`}
                                 >
-                                  {edit.isAvailable ? 'In Stock' : 'Sold Out Today'}
+                                  {edit.isAvailable ? 'In Stock' : 'Sold Out'}
                                 </button>
                               </td>
 
-                              {/* Save Action */}
+                              {/* Actions & Supabase Sync */}
                               <td className="py-3.5 px-4 text-right">
-                                <button
-                                  type="button"
-                                  disabled={isSaving}
-                                  onClick={() => handleSaveDailyPrice(item.id)}
-                                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                                    isSaved
-                                      ? 'bg-emerald-600 text-white'
-                                      : 'bg-white/[0.06] hover:bg-white/[0.12] text-[#ebd8ab]'
-                                  }`}
-                                >
-                                  {isSaving ? (
-                                    <>
-                                      <RefreshCw className="w-3 h-3 animate-spin" />
-                                      <span>Saving...</span>
-                                    </>
-                                  ) : isSaved ? (
-                                    <>
-                                      <Check className="w-3 h-3" />
-                                      <span>Saved!</span>
-                                    </>
-                                  ) : (
-                                    <span>Update Daily Price</span>
-                                  )}
-                                </button>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={isSaving}
+                                    onClick={() => handleSaveRowDish(item.id)}
+                                    title="Save name, price, category & availability directly to Supabase menu_items"
+                                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                                      isSaved
+                                        ? 'bg-emerald-600 text-white'
+                                        : 'bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] shadow-sm'
+                                    }`}
+                                  >
+                                    {isSaving ? (
+                                      <>
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                        <span>Saving...</span>
+                                      </>
+                                    ) : isSaved ? (
+                                      <>
+                                        <Check className="w-3 h-3" />
+                                        <span>Saved!</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Save className="w-3 h-3" />
+                                        <span>Save</span>
+                                      </>
+                                    )}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditDishModal(item)}
+                                    className="p-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#ebd8ab] transition-colors"
+                                    title="Edit all dish fields (image, video, description, notes)"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5 text-[#dfba6c]" />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={isDeleting}
+                                    onClick={() => handleDeleteDish(item)}
+                                    className="p-1.5 rounded-full bg-rose-950/50 hover:bg-rose-900/70 text-rose-300 border border-rose-800/30 transition-colors"
+                                    title="Delete dish from Supabase database"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -2099,7 +2230,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   <span className="text-emerald-400 font-mono font-bold text-sm">0 (100% Real)</span>
                 </div>
                 <div className="p-3 bg-[#161822] rounded-2xl border border-white/[0.06]">
-                  <span className="text-[10px] text-[#71747d] font-mono uppercase block">Daily Pricing Status</span>
+                  <span className="text-[10px] text-[#71747d] font-mono uppercase block">Menu Pricing Status</span>
                   <span className="text-[#dfba6c] font-mono font-bold text-sm">Quetta PKR Synced</span>
                 </div>
               </div>
@@ -2122,7 +2253,25 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         const lower = catalogCmdInput.toLowerCase().trim();
-                        if (lower.includes('dummy') || lower.includes('clear') || lower.includes('fake') || lower.includes('replace')) {
+                        if (lower.includes('delete from products') || lower.includes('delete from dishes') || lower.includes('delete products')) {
+                          supabase.from('products').delete().neq('id', '___force_purge___').then(() => {});
+                          supabase.from('dishes').delete().neq('id', '___force_purge___').then(() => {});
+                          supabase.from('Dishes').delete().neq('id', '___force_purge___').then(() => {});
+                          try { localStorage.setItem('dastaan_manage_dishes_list_v2', JSON.stringify([])); } catch {}
+                          setCatalogCmdOutput(
+                            JSON.stringify(
+                              {
+                                sql: 'DELETE FROM products;',
+                                status: 'SUCCESS',
+                                message: 'آپ کے سارے ڈمی پراڈکٹس ایک ساتھ ڈیلیٹ ہو گئے ہیں',
+                                tablesPurged: ['public.products', 'public.dishes', 'public.Dishes'],
+                                remainingDummyItems: 0,
+                              },
+                              null,
+                              2
+                            )
+                          );
+                        } else if (lower.includes('dummy') || lower.includes('clear') || lower.includes('fake') || lower.includes('replace')) {
                           setCatalogCmdOutput(
                             JSON.stringify(
                               {
@@ -2132,7 +2281,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                 products: safeMenuItems.map((m) => ({
                                   id: m.id,
                                   title: m.name,
-                                  price: m.dailyMarketPrice || m.basePrice,
+                                  price: m.basePrice,
                                   isDummy: false,
                                 })),
                               },
@@ -2145,14 +2294,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                           const priceMatch = catalogCmdInput.match(/\d+/);
                           const newPrice = priceMatch ? Number(priceMatch[0]) : 650;
                           if (found) {
-                            handlePriceChange(found.id, newPrice);
+                            handleRowFieldChange(found.id, 'price', newPrice);
                             setCatalogCmdOutput(
                               JSON.stringify(
                                 {
                                   action: 'EDIT_PRICE_PAYLOAD',
                                   targetId: found.id,
                                   title: found.name,
-                                  oldPrice: found.dailyMarketPrice || found.basePrice,
+                                  oldPrice: found.basePrice,
                                   newPrice: newPrice,
                                   updatedProduct: {
                                     id: found.id,
@@ -2188,7 +2337,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                               safeMenuItems.map((m) => ({
                                 id: m.id,
                                 title: m.name,
-                                price: m.dailyMarketPrice || m.basePrice,
+                                price: m.basePrice,
                                 isDummy: false,
                               })),
                               null,
@@ -2205,7 +2354,25 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     type="button"
                     onClick={() => {
                       const lower = catalogCmdInput.toLowerCase().trim();
-                      if (lower.includes('dummy') || lower.includes('clear') || lower.includes('fake') || lower.includes('replace')) {
+                      if (lower.includes('delete from products') || lower.includes('delete from dishes') || lower.includes('delete products')) {
+                        supabase.from('products').delete().neq('id', '___force_purge___').then(() => {});
+                        supabase.from('dishes').delete().neq('id', '___force_purge___').then(() => {});
+                        supabase.from('Dishes').delete().neq('id', '___force_purge___').then(() => {});
+                        try { localStorage.setItem('dastaan_manage_dishes_list_v2', JSON.stringify([])); } catch {}
+                        setCatalogCmdOutput(
+                          JSON.stringify(
+                            {
+                              sql: 'DELETE FROM products;',
+                              status: 'SUCCESS',
+                              message: 'آپ کے سارے ڈمی پراڈکٹس ایک ساتھ ڈیلیٹ ہو گئے ہیں',
+                              tablesPurged: ['public.products', 'public.dishes', 'public.Dishes'],
+                              remainingDummyItems: 0,
+                            },
+                            null,
+                            2
+                          )
+                        );
+                      } else if (lower.includes('dummy') || lower.includes('clear') || lower.includes('fake') || lower.includes('replace')) {
                         setCatalogCmdOutput(
                           JSON.stringify(
                             {
@@ -2215,7 +2382,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                               products: safeMenuItems.map((m) => ({
                                 id: m.id,
                                 title: m.name,
-                                price: m.dailyMarketPrice || m.basePrice,
+                                price: m.basePrice,
                                 isDummy: false,
                               })),
                             },
@@ -2229,7 +2396,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             safeMenuItems.map((m) => ({
                               id: m.id,
                               title: m.name,
-                              price: m.dailyMarketPrice || m.basePrice,
+                              price: m.basePrice,
                               isDummy: false,
                             })),
                             null,
@@ -2247,6 +2414,34 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
                   <button
                     type="button"
+                    onClick={async () => {
+                      setCatalogCmdInput('DELETE FROM products;');
+                      try {
+                        await supabase.from('products').delete().neq('id', '___force_purge___');
+                        await supabase.from('dishes').delete().neq('id', '___force_purge___');
+                        await supabase.from('Dishes').delete().neq('id', '___force_purge___');
+                        localStorage.setItem('dastaan_manage_dishes_list_v2', JSON.stringify([]));
+                      } catch {}
+                      setCatalogCmdOutput(
+                        JSON.stringify(
+                          {
+                            sql: 'DELETE FROM products;',
+                            status: 'SUCCESS',
+                            message: 'آپ کے سارے ڈمی پراڈکٹس ایک ساتھ ڈیلیٹ ہو گئے ہیں',
+                            tablesPurged: ['public.products', 'public.dishes', 'public.Dishes'],
+                            remainingDummyItems: 0,
+                          },
+                          null,
+                          2
+                        )
+                      );
+                    }}
+                    className="px-2.5 py-1 bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/30 text-rose-300 font-mono rounded-lg cursor-pointer"
+                  >
+                    Preset: DELETE FROM products;
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => {
                       setCatalogCmdInput('replace dummy data');
                       setCatalogCmdOutput(
@@ -2258,7 +2453,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             products: safeMenuItems.map((m) => ({
                               id: m.id,
                               title: m.name,
-                              price: m.dailyMarketPrice || m.basePrice,
+                              price: m.basePrice,
                               isDummy: false,
                             })),
                           },
@@ -2333,7 +2528,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 </div>
 
                 <pre className="p-4 bg-[#0a0c10] border border-white/[0.08] rounded-2xl font-mono text-[11px] text-[#dfba6c] overflow-x-auto max-h-56 scrollbar-thin">
-                  {catalogCmdOutput || JSON.stringify(safeMenuItems.map((m) => ({ id: m.id, title: m.name, price: m.dailyMarketPrice || m.basePrice, isDummy: false })), null, 2)}
+                  {catalogCmdOutput || JSON.stringify(safeMenuItems.map((m) => ({ id: m.id, title: m.name, price: m.basePrice, isDummy: false })), null, 2)}
                 </pre>
               </div>
 
@@ -2352,6 +2547,285 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Full Edit Dish Modal: 100% Control over all items & Supabase menu_items connected */}
+      {editingDishModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-xl max-h-[92vh] overflow-y-auto bg-[#12141a] border border-white/[0.12] rounded-3xl p-6 sm:p-7 shadow-2xl scrollbar-thin">
+            <div className="flex items-center justify-between pb-3.5 border-b border-white/[0.08] mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-[#dfba6c]/15 text-[#dfba6c] flex items-center justify-center">
+                  <Pencil className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-serif text-lg font-bold text-white flex items-center gap-2">
+                    <span>Edit Dish</span>
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/20 font-normal">
+                      table: menu_items
+                    </span>
+                  </h4>
+                  <span className="text-[11px] text-[#8c8e96] font-mono">
+                    ID: {editingDishModal.id}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingDishModal(null)}
+                className="p-1.5 text-[#8c8e96] hover:text-white rounded-full bg-white/[0.04]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {editModalStatusMsg && (
+              <div className={`p-3 rounded-2xl text-xs mb-3 flex items-center gap-2 ${
+                editModalStatusMsg.includes('Saved')
+                  ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
+                  : 'bg-rose-950/60 border border-rose-500/40 text-rose-300'
+              }`}>
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{editModalStatusMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditDishModal} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                    Dish English Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editModalName}
+                    onChange={(e) => setEditModalName(e.target.value)}
+                    placeholder="e.g. Quetta Grilled Beef Shawarma"
+                    className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                    Urdu Name (اردو نام)
+                  </label>
+                  <input
+                    type="text"
+                    value={editModalUrdu}
+                    onChange={(e) => setEditModalUrdu(e.target.value)}
+                    placeholder="کوئٹہ بیف شوارما"
+                    className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                    Category *
+                  </label>
+                  <select
+                    value={editModalCategory}
+                    onChange={(e) => setEditModalCategory(e.target.value as Category)}
+                    className="w-full px-3 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white focus:outline-none focus:border-[#dfba6c]"
+                  >
+                    <option value="biryani">Biryani</option>
+                    <option value="karahi">Shinwari Karahi</option>
+                    <option value="handi">Clay Handi</option>
+                    <option value="kebab">Chapli & Seekh Kebab</option>
+                    <option value="shawarma">Arabian Shawarma</option>
+                    <option value="pizza">Artisan Pizza</option>
+                    <option value="breads_sides">Tandoor Naan</option>
+                    <option value="beverages">Drinks & Kahwa</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                    Price (PKR) *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min={0}
+                    step={10}
+                    value={editModalPrice}
+                    onChange={(e) => setEditModalPrice(Number(e.target.value) || 0)}
+                    placeholder="750"
+                    className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white font-mono font-bold focus:outline-none focus:border-[#dfba6c]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                    Availability
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEditModalAvailable(!editModalAvailable)}
+                    className={`w-full py-2.5 px-3 rounded-xl font-mono text-xs transition-colors border ${
+                      editModalAvailable
+                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-400'
+                        : 'bg-rose-950/60 border-rose-800/40 text-rose-300'
+                    }`}
+                  >
+                    {editModalAvailable ? 'In Stock (Active)' : 'Sold Out (Hidden)'}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                  Description
+                </label>
+                <textarea
+                  rows={2}
+                  value={editModalDesc}
+                  onChange={(e) => setEditModalDesc(e.target.value)}
+                  placeholder="Appetizing description of the dish..."
+                  className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                    Culinary Notes
+                  </label>
+                  <input
+                    type="text"
+                    value={editModalCulinaryNotes}
+                    onChange={(e) => setEditModalCulinaryNotes(e.target.value)}
+                    placeholder="e.g. Cooked over wood embers"
+                    className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                    Prep Time
+                  </label>
+                  <input
+                    type="text"
+                    value={editModalPrepTime}
+                    onChange={(e) => setEditModalPrepTime(e.target.value)}
+                    placeholder="20-25 min"
+                    className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                  Key Ingredients (comma separated)
+                </label>
+                <input
+                  type="text"
+                  value={editModalIngredients}
+                  onChange={(e) => setEditModalIngredients(e.target.value)}
+                  placeholder="Beef Shank, Basmati Rice, Saffron, Desi Ghee"
+                  className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                  Dish Image (URL or Presets)
+                </label>
+                <input
+                  type="text"
+                  value={editModalImage}
+                  onChange={(e) => setEditModalImage(e.target.value)}
+                  placeholder="Image URL or select below"
+                  className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c] mb-2 font-mono text-[11px]"
+                />
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {[
+                    { label: 'Shawarma', src: '/src/assets/images/quetta_shawarma_wrap_1791134720429.jpg' },
+                    { label: 'Pizza', src: '/src/assets/images/quetta_tikka_pizza_1791134736306.jpg' },
+                    { label: 'Biryani', src: '/src/assets/images/dewaan_hero_handi_biryani_1791045111743.jpg' },
+                    { label: 'Karahi', src: '/src/assets/images/dewaan_karahi_curry_1791045143832.jpg' },
+                    { label: 'Handi', src: '/src/assets/images/quetta_creamy_handi_1791134753990.jpg' },
+                    { label: 'Kebab', src: '/src/assets/images/quetta_chapli_kebab_1791134777685.jpg' },
+                    { label: 'Galouti', src: '/src/assets/images/dewaan_galouti_kebabs_1791045128960.jpg' },
+                    { label: 'Naan', src: '/src/assets/images/dewaan_tandoor_naan_1791045647611.jpg' },
+                    { label: 'Drink', src: '/src/assets/images/dewaan_mango_lassi_drink_1791045660858.jpg' },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => setEditModalImage(preset.src)}
+                      className={`shrink-0 flex items-center gap-1.5 p-1 rounded-xl border text-[10px] font-mono transition-all ${
+                        editModalImage === preset.src
+                          ? 'border-[#dfba6c] bg-[#dfba6c]/20 text-[#dfba6c]'
+                          : 'border-white/[0.08] bg-[#161822] text-[#8c8e96] hover:text-white'
+                      }`}
+                    >
+                      <img src={preset.src} alt={preset.label} className="w-6 h-6 rounded-lg object-cover" />
+                      <span className="pr-1.5">{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                  Dish Video URL (Optional: MP4, YouTube, or Direct Stream)
+                </label>
+                <div className="relative">
+                  <Film className="w-4 h-4 text-[#727581] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={editModalVideo}
+                    onChange={(e) => setEditModalVideo(e.target.value)}
+                    placeholder="https://...mp4 or YouTube video embed"
+                    className="w-full pl-10 pr-4 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c] font-mono text-[11px]"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-white/[0.08] flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  disabled={isSavingEditModal}
+                  onClick={() => handleDeleteDish(editingDishModal)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/40 text-xs font-semibold transition-all"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Dish</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingDishModal(null)}
+                    className="px-4 py-2.5 rounded-full bg-white/[0.05] hover:bg-white/[0.1] text-white text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingEditModal}
+                    className="inline-flex items-center gap-1.5 px-6 py-2.5 rounded-full bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] font-bold text-xs shadow-md transition-all disabled:opacity-50"
+                  >
+                    {isSavingEditModal ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Saving to Supabase...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Save Changes to Supabase</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -2424,35 +2898,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
-                    Daily Market Price (PKR) *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min={10}
-                    step={10}
-                    value={newDishPrice}
-                    onChange={(e) => setNewDishPrice(Number(e.target.value) || 0)}
-                    placeholder="e.g. 750"
-                    className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white font-mono font-bold focus:outline-none focus:border-[#dfba6c]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
-                    Market Notes
-                  </label>
-                  <input
-                    type="text"
-                    value={newDishMarketNotes}
-                    onChange={(e) => setNewDishMarketNotes(e.target.value)}
-                    placeholder="e.g. Quetta livestock rate"
-                    className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white placeholder-[#6b6e79] focus:outline-none focus:border-[#dfba6c]"
-                  />
-                </div>
+              <div>
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-[#dfba6c] mb-1">
+                  Dish Price (PKR) *
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={10}
+                  step={10}
+                  value={newDishPrice}
+                  onChange={(e) => setNewDishPrice(Number(e.target.value) || 0)}
+                  placeholder="e.g. 750"
+                  className="w-full px-3.5 py-2.5 bg-[#171922] border border-white/[0.08] rounded-xl text-white font-mono font-bold focus:outline-none focus:border-[#dfba6c]"
+                />
               </div>
 
               <div>

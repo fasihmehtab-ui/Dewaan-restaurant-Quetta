@@ -51,10 +51,10 @@ export const MenuList: React.FC<MenuListProps> = ({ items, onOpenCustomizer }) =
             <span>Dewaan Quetta Dastarkhwan</span>
           </div>
           <h2 className="font-serif text-3xl sm:text-5xl text-white font-medium [text-wrap:balance]">
-            Authentic Quetta Dishes & Daily Market Prices
+            Authentic Quetta Dishes & Menu
           </h2>
           <p className="text-sm text-[#9c9ea6] mt-3 max-w-xl leading-relaxed font-light">
-            Cooked fresh to order in Quetta: Arabian Shawarma, Artisan Pizza, Dum Biryani, Chapli Kebabs, Shinwari Karahi & Sealed Handi. Prices updated daily with local market value.
+            Cooked fresh to order in Quetta: Arabian Shawarma, Artisan Pizza, Dum Biryani, Chapli Kebabs, Shinwari Karahi & Sealed Handi.
           </p>
         </div>
 
@@ -233,18 +233,10 @@ export const MenuList: React.FC<MenuListProps> = ({ items, onOpenCustomizer }) =
                       <h3 className="font-serif text-xl font-medium text-white group-hover:text-[#dfba6c] transition-colors leading-snug">
                         {item.name}
                       </h3>
-                      {item.marketPriceNotes && (
-                        <span className="text-[10px] text-emerald-400 font-mono block mt-0.5">
-                          {item.marketPriceNotes}
-                        </span>
-                      )}
                     </div>
                     <div className="text-right shrink-0">
                       <span className="font-mono text-lg font-bold text-[#dfba6c] tabular-nums block">
-                        {formatPKR(item.dailyMarketPrice || item.basePrice)}
-                      </span>
-                      <span className="text-[9px] font-mono text-[#8c8f9b] uppercase tracking-wider block">
-                        Daily Market Rate
+                        {formatPKR(item.basePrice)}
                       </span>
                     </div>
                   </div>
@@ -289,7 +281,7 @@ export const MenuList: React.FC<MenuListProps> = ({ items, onOpenCustomizer }) =
                     <div className="flex items-center gap-2">
                       <a
                         href={`https://wa.me/923118427913?text=${encodeURIComponent(
-                          `Hello Dewaan, I want to order: ${item.name} - Price: ${formatPKR(item.dailyMarketPrice || item.basePrice)} - Quantity: 1. My Address is:`
+                          `Hello Dewaan, I want to order: ${item.name} - Price: ${formatPKR(item.basePrice)} - Quantity: 1. My Address is:`
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"

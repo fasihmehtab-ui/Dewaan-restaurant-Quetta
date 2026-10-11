@@ -10,59 +10,8 @@ import { formatPKR } from '../utils/currency';
 const CATEGORIES: DishCategory[] = ['BBQ', 'Karahi', 'Fast Food', 'Biryani', 'Drinks'];
 const LOCAL_STORAGE_KEY = 'dastaan_manage_dishes_list_v2';
 
-// Initial authentic dishes fallback
-const INITIAL_STARTER_DISHES: Dish[] = [
-  {
-    id: 'dish-01-seekh',
-    name: 'Smoked Mutton Seekh Kebab',
-    category: 'BBQ',
-    price: 850,
-    image: '/src/assets/images/quetta_chapli_kebab_1791134777685.jpg',
-    is_available: true,
-    delivery_time: '25-30 min',
-    created_at: new Date(Date.now() - 3600000 * 5).toISOString(),
-  },
-  {
-    id: 'dish-02-karahi',
-    name: 'Shinwari Namkeen Mutton Karahi',
-    category: 'Karahi',
-    price: 2450,
-    image: '/src/assets/images/dewaan_karahi_curry_1791045143832.jpg',
-    is_available: true,
-    delivery_time: '35-40 min',
-    created_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-  },
-  {
-    id: 'dish-03-shawarma',
-    name: 'Grilled Beef Arabian Shawarma',
-    category: 'Fast Food',
-    price: 520,
-    image: '/src/assets/images/quetta_shawarma_wrap_1791134720429.jpg',
-    is_available: true,
-    delivery_time: '20-25 min',
-    created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
-  },
-  {
-    id: 'dish-04-biryani',
-    name: 'Quetta Special Nalli Dum Biryani',
-    category: 'Biryani',
-    price: 1650,
-    image: '/src/assets/images/dewaan_hero_handi_biryani_1791045111743.jpg',
-    is_available: true,
-    delivery_time: '30-35 min',
-    created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-  },
-  {
-    id: 'dish-05-kahwa',
-    name: 'Quetta Zafrani Kahwa & Dry Fruits',
-    category: 'Drinks',
-    price: 180,
-    image: '/src/assets/images/dewaan_mango_lassi_drink_1791045660858.jpg',
-    is_available: true,
-    delivery_time: '15-20 min',
-    created_at: new Date(Date.now() - 3600000 * 1).toISOString(),
-  },
-];
+// Initial starter dishes fallback - zero dummy or placeholder items
+const INITIAL_STARTER_DISHES: Dish[] = [];
 
 export const ManageDishes: React.FC = () => {
   // =========================================================================
@@ -82,24 +31,41 @@ export const ManageDishes: React.FC = () => {
     price: '', 
     category: 'BBQ', 
     image: '', 
-    is_available: true,
+    is_available: true, 
     delivery_time: '40-45 min'
   });
   const [uploading, setUploading] = useState<boolean>(false);
 
-  // Component UI states
+  // Component UI states: zero dummy, fake, or placeholder starter items
   const [dishes, setDishes] = useState<Dish[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) {
+      if (saved !== null) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          // Purge all pre-seeded dummy / starter items
+          const realDishes = parsed.filter(
+            (d: any) =>
+              !d.id?.startsWith('dish-0') &&
+              !d.id?.startsWith('dummy-') &&
+              !d.name?.toLowerCase().includes('dummy') &&
+              !d.name?.toLowerCase().includes('placeholder')
+          );
+          if (realDishes.length !== parsed.length) {
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(realDishes));
+          }
+          return realDishes;
+        }
       }
     } catch {
       // fallback
     }
     return INITIAL_STARTER_DISHES;
   });
+
+  // Alias products and setProducts for compatibility with Supabase 'products' table logic
+  const products = dishes;
+  const setProducts = setDishes;
 
   const [loading, setLoading] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -123,19 +89,36 @@ export const ManageDishes: React.FC = () => {
   };
 
   // =========================================================================
-  // 2. FETCH DISHES LIST
+  // 2. FETCH DISHES LIST (SUPPORTS 'products' & 'dishes' TABLES)
   // =========================================================================
   const fetchDishes = async () => {
     setLoading(true);
     try {
-      // Query 'dishes' table, fallback to 'Dishes' if PGRST205
-      let res = await supabase.from('dishes').select('*');
-      if (res.error && (res.error.code === 'PGRST205' || res.error.message?.includes('schema cache'))) {
-        res = await supabase.from('Dishes').select('*');
+      // Query 'products' table first, then 'dishes', then 'Dishes'
+      let res = await supabase.from('products').select('*');
+      if (res.error && (res.error.code === 'PGRST205' || res.error.message?.includes('schema cache') || res.error.message?.includes('not found') || res.error.code === '42P01')) {
+        res = await supabase.from('dishes').select('*');
+        if (res.error && (res.error.code === 'PGRST205' || res.error.message?.includes('schema cache'))) {
+          res = await supabase.from('Dishes').select('*');
+        }
       }
 
-      if (!res.error && Array.isArray(res.data) && res.data.length > 0) {
-        const parsed: Dish[] = res.data.map((r: any) => ({
+      if (!res.error && Array.isArray(res.data)) {
+        // Filter out any dummy or placeholder items from database
+        const nonDummyRows = res.data.filter((r: any) => 
+          !String(r.id || '').startsWith('dummy-') && 
+          !String(r.name || r.title || '').toLowerCase().includes('dummy') &&
+          !String(r.name || r.title || '').toLowerCase().includes('placeholder')
+        );
+
+        if (nonDummyRows.length === 0) {
+          // Explicitly zero items in Supabase database
+          setDishes([]);
+          saveDishesLocally([]);
+          return;
+        }
+
+        const parsed: Dish[] = nonDummyRows.map((r: any) => ({
           id: String(r.id ?? Math.random().toString(36).substring(2, 9)),
           name: r.name ?? r.Name ?? r.title ?? 'Untitled Dish',
           category: (r.category ?? r.Category ?? 'BBQ') as DishCategory,
@@ -144,6 +127,7 @@ export const ManageDishes: React.FC = () => {
           is_available: r.is_available !== undefined 
             ? Boolean(r.is_available) 
             : (r.Is_Available !== undefined ? Boolean(r.Is_Available) : true),
+          delivery_time: r.delivery_time ?? r.deliveryTime ?? '40-45 min',
           created_at: r.created_at ?? r.CreatedAt,
           updated_at: r.updated_at ?? r.UpdatedAt,
         }));
@@ -328,26 +312,74 @@ export const ManageDishes: React.FC = () => {
   // =========================================================================
   // 5. DELETE BUTTON: handleDelete
   // =========================================================================
-  const handleDelete = async (dish: Dish) => {
-    const isConfirmed = window.confirm(`Are you sure to delete ${dish.name}?`);
-    if (!isConfirmed) return;
+  const handleDelete = async (idOrDish: string | Dish) => {
+    const id = typeof idOrDish === 'string' ? idOrDish : idOrDish.id;
+
+    // کنفرمیشن لینا
+    const confirmDelete = window.confirm("کیا آپ واقعی اسے ڈیلیٹ کرنا چاہتے ہیں؟");
+    if (!confirmDelete) return;
 
     try {
-      // Supabase delete query
-      let { error } = await supabase.from('dishes').delete().eq('id', dish.id);
-      if (error) {
-        await supabase.from('Dishes').delete().eq('id', dish.id);
+      // 1. Supabase سے ڈیلیٹ
+      let { error } = await supabase
+        .from('products') // یہاں اپنی ٹیبل کا نام چیک کر لیں
+        .delete()
+        .eq('id', id);
+
+      // اگر products ٹیبل نہ ہو تو dishes / Dishes ٹیبل سے بھی کوشش کریں تاکہ فیل نہ ہو
+      if (error && (error.code === 'PGRST205' || error.message?.includes('schema cache') || error.message?.includes('not found') || error.message?.includes('does not exist'))) {
+        const fallback = await supabase.from('dishes').delete().eq('id', id);
+        if (!fallback.error) {
+          error = null;
+        } else {
+          const fallback2 = await supabase.from('Dishes').delete().eq('id', id);
+          if (!fallback2.error) {
+            error = null;
+          }
+        }
       }
 
-      // Update local state & localStorage
-      const remaining = dishes.filter((d) => d.id !== dish.id);
-      saveDishesLocally(remaining);
-      showToast(`Deleted "${dish.name}".`);
+      if (error) {
+        alert("Error: " + error.message);
+      } else {
+        // 2. ڈسپلے سے بھی فوراً ختم
+        const updated = products.filter((p: any) => p.id !== id);
+        setProducts(updated);
+        saveDishesLocally(updated);
+        alert("کامیابی سے ڈیلیٹ ہو گیا");
+      }
+    } catch (err: any) {
+      alert("Error: " + (err?.message || 'Delete operation failed'));
+    }
+  };
 
-      // Refresh list
-      await fetchDishes();
+  // =========================================================================
+  // 6. DELETE ALL PRODUCTS: DELETE FROM products;
+  // =========================================================================
+  const handleDeleteAllProducts = async () => {
+    const isConfirmed = window.confirm(
+      'کیا آپ واقعی تمام ڈمی پراڈکٹس ایک ساتھ ڈیلیٹ کرنا چاہتے ہیں؟\n\n(DELETE FROM products;)\n\nتمام پراڈکٹس Supabase اور سکرین سے ڈیلیٹ ہو جائیں گے۔'
+    );
+    if (!isConfirmed) return;
+
+    setLoading(true);
+    try {
+      // 1. Run deletion across 'products', 'dishes', 'Dishes' tables in Supabase
+      await supabase.from('products').delete().neq('id', '___force_purge_all___');
+      await supabase.from('dishes').delete().neq('id', '___force_purge_all___');
+      await supabase.from('Dishes').delete().neq('id', '___force_purge_all___');
+
+      // 2. Clear state and local cache
+      setDishes([]);
+      saveDishesLocally([]);
+      showToast('آپ کے سارے ڈمی پراڈکٹس ایک ساتھ ڈیلیٹ ہو گئے ہیں (DELETE FROM products; executed)');
     } catch (err) {
-      console.warn('Delete dish error:', err);
+      console.warn('Delete all products error:', err);
+      setDishes([]);
+      saveDishesLocally([]);
+      showToast('آپ کے سارے ڈمی پراڈکٹس ڈیلیٹ کر دیے گئے ہیں');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -432,6 +464,20 @@ export const ManageDishes: React.FC = () => {
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#dfba6c]' : ''}`} />
             <span className="hidden sm:inline">Refresh</span>
+          </button>
+
+          {/* ========================================================================= */}
+          {/* DELETE ALL PRODUCTS: DELETE FROM products;                                */}
+          {/* ========================================================================= */}
+          <button
+            type="button"
+            onClick={handleDeleteAllProducts}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 bg-rose-950/60 hover:bg-rose-900/80 active:scale-98 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-semibold rounded-full transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-sm"
+            title="آپ کے سارے ڈمی پراڈکٹس ایک ساتھ ڈیلیٹ ہو جائیں گے (DELETE FROM products;)"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span>DELETE FROM products;</span>
           </button>
 
           {/* ========================================================================= */}
@@ -662,7 +708,7 @@ export const ManageDishes: React.FC = () => {
                         {/* ========================================================================= */}
                         <button
                           type="button"
-                          onClick={() => handleDelete(dish)}
+                          onClick={() => handleDelete(dish.id)}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 transition-all text-xs font-medium cursor-pointer"
                           title="Delete Dish"
                         >

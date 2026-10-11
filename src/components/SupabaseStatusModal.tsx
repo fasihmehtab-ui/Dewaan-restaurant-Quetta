@@ -125,10 +125,10 @@ export const SupabaseStatusModal: React.FC<SupabaseStatusModalProps> = ({
                 <div>
                   <div className="font-mono text-white font-semibold flex items-center gap-2">
                     <span>public.menu_items</span>
-                    <span className="text-[10px] text-[#dfba6c] font-normal">Daily Market Value Column</span>
+                    <span className="text-[10px] text-[#dfba6c] font-normal">Menu Catalog</span>
                   </div>
                   <div className="text-[11px] text-[#7e8290] mt-0.5 font-light">
-                    Stores dishes (Shawarma, Pizza, Biryani, Kabab, Karahi, Handi) with daily_market_price, market_price_notes, and availability.
+                    Stores authentic Quetta dishes (Shawarma, Pizza, Biryani, Kabab, Karahi, Handi) with prices, categories, and availability.
                   </div>
                 </div>
                 <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/50 px-2 py-0.5 rounded-full border border-emerald-500/20">
