@@ -18,7 +18,7 @@ import { Footer } from './components/Footer';
 import { MENU_ITEMS } from './data/menuData';
 import { MenuItem, CartItem, Order } from './types';
 import { getSavedOrders, saveOrders } from './utils/orderStorage';
-import { fetchOrdersFromSupabase, updateOrderInSupabase, fetchMenuItemsFromSupabase, CustomerUser, getCurrentCustomerSession } from './utils/supabaseService';
+import { fetchOrdersFromSupabase, updateOrderInSupabase, fetchMenuItemsFromSupabase, CustomerUser, getCurrentCustomerSession, syncAndGetLocalReservation } from './utils/supabaseService';
 import { Check, Clock, ChevronRight } from 'lucide-react';
 
 export default function App() {
@@ -121,6 +121,15 @@ export default function App() {
   useEffect(() => {
     saveOrders(orders);
   }, [orders]);
+
+  // Background auto-off check: ensures patron's reservation turns OFF automatically after 15-min grace
+  useEffect(() => {
+    syncAndGetLocalReservation();
+    const interval = setInterval(() => {
+      syncAndGetLocalReservation();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Active delivery check
   const activeOrder = orders.find((o) => o.id === activeOrderId) || orders[0];

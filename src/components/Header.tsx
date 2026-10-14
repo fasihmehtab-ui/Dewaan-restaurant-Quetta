@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { ShoppingBag, Clock, Menu as MenuIcon, X, Sparkles, User, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ShoppingBag, Clock, Menu as MenuIcon, X, Sparkles, User, ShieldCheck, Timer } from 'lucide-react';
 import { formatPKR } from '../utils/currency';
-import { CustomerUser } from '../utils/supabaseService';
+import { CustomerUser, syncAndGetLocalReservation, getReservationTiming, TableReservation } from '../utils/supabaseService';
 
 interface HeaderProps {
   activeTab: 'menu' | 'track' | 'heritage' | 'reserve';
@@ -29,6 +29,21 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCustomOrder,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [myReservation, setMyReservation] = useState<TableReservation | null>(() => syncAndGetLocalReservation());
+
+  useEffect(() => {
+    const checkRes = () => {
+      const res = syncAndGetLocalReservation();
+      setMyReservation(res);
+    };
+    checkRes();
+    const interval = setInterval(checkRes, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const resTiming = myReservation 
+    ? getReservationTiming(myReservation.reservationDate, myReservation.timeSlot, 15)
+    : null;
 
   const handleNavClick = (tab: 'menu' | 'track' | 'heritage' | 'reserve') => {
     setActiveTab(tab);
@@ -102,13 +117,31 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={() => handleNavClick('reserve')}
-              className={`px-4 py-2 text-xs font-medium rounded-full transition-all duration-200 focus:outline-none ${
+              className={`px-4 py-2 text-xs font-medium rounded-full transition-all duration-200 focus:outline-none flex items-center gap-1.5 ${
                 activeTab === 'reserve'
                   ? 'bg-[#dfba6c] text-[#090a0d] font-semibold shadow-sm'
                   : 'text-[#9c9ea6] hover:text-white hover:bg-white/[0.04]'
               }`}
             >
-              Dine-In Reservation
+              <span>Dine-In Reservation</span>
+              {myReservation && myReservation.status !== 'cancelled' && (
+                <span className="relative flex h-2 w-2">
+                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                    resTiming?.isOverdue 
+                      ? 'bg-rose-400' 
+                      : resTiming?.isInGracePeriod 
+                      ? 'bg-amber-400' 
+                      : 'bg-emerald-400'
+                  }`} />
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                    resTiming?.isOverdue 
+                      ? 'bg-rose-500' 
+                      : resTiming?.isInGracePeriod 
+                      ? 'bg-amber-500' 
+                      : 'bg-emerald-500'
+                  }`} />
+                </span>
+              )}
             </button>
 
             {onOpenCustomOrder && (
@@ -229,11 +262,22 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
           <button
             onClick={() => handleNavClick('reserve')}
-            className={`w-full text-left py-2.5 px-4 rounded-xl text-sm ${
+            className={`w-full text-left py-2.5 px-4 rounded-xl text-sm flex items-center justify-between ${
               activeTab === 'reserve' ? 'bg-[#dfba6c] text-[#090a0d] font-semibold' : 'text-[#9c9ea6]'
             }`}
           >
-            Dine-In Table Reservation
+            <span>Dine-In Table Reservation</span>
+            {myReservation && myReservation.status !== 'cancelled' && (
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                resTiming?.isOverdue
+                  ? 'bg-rose-950 text-rose-300 border-rose-500/40'
+                  : resTiming?.isInGracePeriod
+                  ? 'bg-amber-950 text-amber-300 border-amber-500/40 animate-pulse'
+                  : 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+              }`}>
+                {resTiming?.isOverdue ? 'Auto-Off' : resTiming?.isInGracePeriod ? '15m Grace Active' : 'Booked'}
+              </span>
+            )}
           </button>
 
           {onOpenCustomOrder && (

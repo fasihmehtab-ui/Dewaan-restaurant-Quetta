@@ -1,6 +1,8 @@
 import { supabase, SUPABASE_CONFIG } from './supabaseClient';
 import { Order, OrderStatus } from '../types';
 
+export type ReservationStatus = 'confirmed' | 'cancelled' | 'expired' | 'arrived';
+
 export interface TableReservation {
   id: string;
   fullName: string;
@@ -11,7 +13,9 @@ export interface TableReservation {
   seatingArea: string;
   notes?: string;
   createdAt: string;
-  status: 'confirmed' | 'cancelled';
+  status: ReservationStatus;
+  arrivedAt?: string;
+  expiredAt?: string;
 }
 
 export const SUPABASE_SCHEMA_SQL = `
@@ -338,6 +342,27 @@ export async function saveReservationToSupabase(reservation: Omit<TableReservati
       .from('reservations')
       .insert([payload]);
 
+    // Always cache locally as backup
+    try {
+      const raw = localStorage.getItem('dewaan_all_reservations_v1');
+      const list = raw ? JSON.parse(raw) : [];
+      list.unshift({
+        id,
+        fullName: reservation.fullName,
+        phone: reservation.phone,
+        guestCount: reservation.guestCount,
+        reservationDate: reservation.reservationDate,
+        timeSlot: reservation.timeSlot,
+        seatingArea: reservation.seatingArea,
+        notes: reservation.notes || undefined,
+        createdAt,
+        status: 'confirmed',
+      });
+      localStorage.setItem('dewaan_all_reservations_v1', JSON.stringify(list));
+    } catch (e) {
+      console.warn('Local cache error:', e);
+    }
+
     if (error) {
       console.warn('[Supabase] Could not insert to "reservations" table:', error.message);
       return { success: false, id, error };
@@ -352,54 +377,366 @@ export async function saveReservationToSupabase(reservation: Omit<TableReservati
 }
 
 /**
+ * Parses reservation date and time into a JavaScript Date object
+ */
+export function parseReservationDateTime(dateStr: string, timeStr: string): Date | null {
+  try {
+    if (!dateStr) return null;
+    const cleanDate = dateStr.trim();
+    let hours = 19;
+    let minutes = 30;
+
+    if (timeStr) {
+      const cleanTime = timeStr.trim();
+      // Match 24-hr format like "19:30" or "09:00"
+      const match24 = cleanTime.match(/^(\d{1,2}):(\d{2})$/);
+      if (match24) {
+        hours = parseInt(match24[1], 10);
+        minutes = parseInt(match24[2], 10);
+      } else {
+        // Match 12-hr format like "7:30 PM", "7:30pm", "07:30 PM"
+        const match12 = cleanTime.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+        if (match12) {
+          hours = parseInt(match12[1], 10);
+          minutes = parseInt(match12[2], 10);
+          const meridiem = (match12[3] || '').toLowerCase();
+          if (meridiem === 'pm' && hours < 12) hours += 12;
+          if (meridiem === 'am' && hours === 12) hours = 0;
+        }
+      }
+    }
+
+    // Split YYYY-MM-DD
+    const parts = cleanDate.split('-');
+    if (parts.length === 3) {
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+      const dt = new Date(y, m, d, hours, minutes, 0, 0);
+      return isNaN(dt.getTime()) ? null : dt;
+    }
+
+    const fallback = new Date(`${cleanDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`);
+    return isNaN(fallback.getTime()) ? null : fallback;
+  } catch (err) {
+    console.error('Error parsing reservation date/time:', err);
+    return null;
+  }
+}
+
+export interface ReservationTimingInfo {
+  scheduledDateTime: Date | null;
+  cutoffDateTime: Date | null; // scheduled + grace period
+  isOverdue: boolean; // strictly past scheduled + 15 min grace window
+  isInGracePeriod: boolean; // between scheduled time and +15 min cutoff
+  isUpcoming: boolean; // before scheduled time
+  minutesUntilScheduled: number;
+  minutesRemainingInGrace: number;
+  secondsRemainingInGrace: number;
+  graceCountdownFormatted: string; // e.g. "14:28"
+  gracePercentRemaining: number; // 0 to 100
+  minutesOverdue: number;
+  formattedScheduledTime: string;
+  formattedCutoffTime: string;
+}
+
+/**
+ * Calculates real-time status and 15-minute grace period cutoff for any reservation
+ */
+export function getReservationTiming(
+  reservationDate: string,
+  timeSlot: string,
+  graceMinutes: number = 15
+): ReservationTimingInfo {
+  const scheduled = parseReservationDateTime(reservationDate, timeSlot);
+  if (!scheduled) {
+    return {
+      scheduledDateTime: null,
+      cutoffDateTime: null,
+      isOverdue: false,
+      isInGracePeriod: false,
+      isUpcoming: false,
+      minutesUntilScheduled: 0,
+      minutesRemainingInGrace: 0,
+      secondsRemainingInGrace: 0,
+      graceCountdownFormatted: '00:00',
+      gracePercentRemaining: 0,
+      minutesOverdue: 0,
+      formattedScheduledTime: timeSlot || '—',
+      formattedCutoffTime: '—',
+    };
+  }
+
+  const cutoff = new Date(scheduled.getTime() + graceMinutes * 60 * 1000);
+  const now = new Date();
+
+  const diffToScheduledMs = scheduled.getTime() - now.getTime();
+  const diffToCutoffMs = cutoff.getTime() - now.getTime();
+
+  const isUpcoming = diffToScheduledMs > 0;
+  const isInGracePeriod = diffToScheduledMs <= 0 && diffToCutoffMs >= 0;
+  const isOverdue = diffToCutoffMs < 0;
+
+  const totalGraceSeconds = graceMinutes * 60;
+  const remainingGraceSeconds = Math.max(0, Math.floor(diffToCutoffMs / 1000));
+  const graceMinutesPart = Math.floor(remainingGraceSeconds / 60);
+  const graceSecondsPart = remainingGraceSeconds % 60;
+  const graceCountdownFormatted = `${String(graceMinutesPart).padStart(2, '0')}:${String(graceSecondsPart).padStart(2, '0')}`;
+  const gracePercentRemaining = Math.min(100, Math.max(0, Math.round((remainingGraceSeconds / totalGraceSeconds) * 100)));
+
+  const minutesUntilScheduled = Math.max(0, Math.round(diffToScheduledMs / (60 * 1000)));
+  const minutesRemainingInGrace = Math.max(0, Math.ceil(diffToCutoffMs / (60 * 1000)));
+  const minutesOverdue = Math.max(0, Math.floor(Math.abs(diffToCutoffMs) / (60 * 1000)));
+
+  const formatOptions: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit', hour12: true };
+  const formattedScheduledTime = scheduled.toLocaleTimeString([], formatOptions);
+  const formattedCutoffTime = cutoff.toLocaleTimeString([], formatOptions);
+
+  return {
+    scheduledDateTime: scheduled,
+    cutoffDateTime: cutoff,
+    isOverdue,
+    isInGracePeriod,
+    isUpcoming,
+    minutesUntilScheduled,
+    minutesRemainingInGrace,
+    secondsRemainingInGrace: remainingGraceSeconds,
+    graceCountdownFormatted,
+    gracePercentRemaining,
+    minutesOverdue,
+    formattedScheduledTime,
+    formattedCutoffTime,
+  };
+}
+
+/**
  * Fetch reservations from Supabase backend
  */
 export async function fetchReservationsFromSupabase(): Promise<TableReservation[]> {
   try {
+    const localRaw = localStorage.getItem('dewaan_all_reservations_v1');
+    const localList: TableReservation[] = localRaw ? JSON.parse(localRaw) : [];
+
     const { data, error } = await supabase
       .from('reservations')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error || !data) {
-      return [];
+    if (error || !data || data.length === 0) {
+      return localList;
     }
 
-    return data.map((row: any): TableReservation => ({
-      id: row.id,
-      fullName: row.full_name || 'Guest',
-      phone: row.phone || '',
-      guestCount: row.guest_count || 2,
-      reservationDate: row.reservation_date || '',
-      timeSlot: row.time_slot || '',
-      seatingArea: row.seating_area || 'diwan',
-      notes: row.notes || undefined,
-      createdAt: row.created_at || new Date().toISOString(),
-      status: row.status === 'cancelled' ? 'cancelled' : 'confirmed',
-    }));
+    const remoteList = data.map((row: any): TableReservation => {
+      let status: ReservationStatus = 'confirmed';
+      if (row.status === 'cancelled') status = 'cancelled';
+      else if (row.status === 'expired') status = 'expired';
+      else if (row.status === 'arrived') status = 'arrived';
+      else status = 'confirmed';
+
+      return {
+        id: row.id,
+        fullName: row.full_name || 'Guest',
+        phone: row.phone || '',
+        guestCount: row.guest_count || 2,
+        reservationDate: row.reservation_date || '',
+        timeSlot: row.time_slot || '',
+        seatingArea: row.seating_area || 'diwan',
+        notes: row.notes || undefined,
+        createdAt: row.created_at || new Date().toISOString(),
+        status,
+        arrivedAt: row.arrived_at,
+        expiredAt: row.expired_at,
+      };
+    });
+
+    // Merge: prioritize remote, but keep any local not yet on remote
+    const map = new Map<string, TableReservation>();
+    remoteList.forEach((r) => map.set(r.id, r));
+    localList.forEach((r) => {
+      if (!map.has(r.id)) map.set(r.id, r);
+    });
+
+    const merged = Array.from(map.values());
+    try {
+      localStorage.setItem('dewaan_all_reservations_v1', JSON.stringify(merged));
+    } catch {}
+
+    return merged;
   } catch (err) {
-    console.error('[Supabase] Error fetching reservations:', err);
-    return [];
+    console.error('[Supabase] Error fetching reservations, using local fallback:', err);
+    try {
+      const localRaw = localStorage.getItem('dewaan_all_reservations_v1');
+      return localRaw ? JSON.parse(localRaw) : [];
+    } catch {
+      return [];
+    }
   }
 }
 
 /**
- * Update reservation status (confirm / cancel)
+ * Update reservation status (confirm / cancel / expired / arrived)
+ * Sets status in both Supabase database and local cache.
  */
-export async function updateReservationStatusInSupabase(id: string, status: 'confirmed' | 'cancelled'): Promise<boolean> {
+export async function updateReservationStatusInSupabase(
+  id: string,
+  status: ReservationStatus,
+  extraData?: { arrivedAt?: string; expiredAt?: string }
+): Promise<boolean> {
+  // Update local cache immediately
   try {
+    const raw = localStorage.getItem('dewaan_all_reservations_v1');
+    if (raw) {
+      const list: TableReservation[] = JSON.parse(raw);
+      const updated = list.map((item) => {
+        if (item.id === id) {
+          return {
+            ...item,
+            status,
+            arrivedAt: status === 'arrived' ? (extraData?.arrivedAt || new Date().toISOString()) : item.arrivedAt,
+            expiredAt: status === 'expired' ? (extraData?.expiredAt || new Date().toISOString()) : item.expiredAt,
+          };
+        }
+        return item;
+      });
+      localStorage.setItem('dewaan_all_reservations_v1', JSON.stringify(updated));
+    }
+
+    // Also update patron's own reservation if it matches
+    const myRaw = localStorage.getItem('dewaan_my_reservation_v1');
+    if (myRaw) {
+      const myRes = JSON.parse(myRaw);
+      if (myRes.id === id) {
+        myRes.status = status;
+        if (status === 'expired') myRes.expiredAt = extraData?.expiredAt || new Date().toISOString();
+        if (status === 'arrived') myRes.arrivedAt = extraData?.arrivedAt || new Date().toISOString();
+        localStorage.setItem('dewaan_my_reservation_v1', JSON.stringify(myRes));
+      }
+    }
+  } catch (e) {
+    console.warn('Local update error:', e);
+  }
+
+  try {
+    const payload: any = { status };
+    if (status === 'arrived') {
+      payload.arrived_at = extraData?.arrivedAt || new Date().toISOString();
+    } else if (status === 'expired') {
+      payload.expired_at = extraData?.expiredAt || new Date().toISOString();
+    }
+
     const { error } = await supabase
       .from('reservations')
-      .update({ status })
+      .update(payload)
       .eq('id', id);
 
     if (error) {
-      console.warn('[Supabase] Error updating reservation status:', error.message);
-      return false;
+      console.warn('[Supabase] Error updating reservation status with extra payload, trying status only:', error.message);
+      // Fallback in case arrived_at or expired_at columns are not in user schema
+      const { error: fallbackErr } = await supabase
+        .from('reservations')
+        .update({ status })
+        .eq('id', id);
+      if (fallbackErr) {
+        console.warn('[Supabase] Fallback update failed:', fallbackErr.message);
+        return false;
+      }
     }
     return true;
   } catch (err) {
     console.error('[Supabase] Error updating reservation:', err);
+    return false;
+  }
+}
+
+/**
+ * Scans list of reservations and automatically sets any overdue confirmed reservations to 'expired'
+ * (Turning reservation OFF after the 15-minute grace period has ended).
+ */
+export async function checkAndExpireOverdueReservations(
+  reservations: TableReservation[],
+  graceMinutes: number = 15
+): Promise<{ updatedList: TableReservation[]; expiredCount: number; newlyExpiredIds: string[] }> {
+  const newlyExpiredIds: string[] = [];
+  const now = new Date();
+
+  const updatedList = await Promise.all(
+    reservations.map(async (res) => {
+      // Only confirmed reservations that haven't arrived yet are subject to auto-expiry
+      if (res.status !== 'confirmed') {
+        return res;
+      }
+
+      const timing = getReservationTiming(res.reservationDate, res.timeSlot, graceMinutes);
+      if (timing.isOverdue) {
+        newlyExpiredIds.push(res.id);
+
+        // Async sync to Supabase
+        updateReservationStatusInSupabase(res.id, 'expired', {
+          expiredAt: now.toISOString(),
+        }).catch((err) => {
+          console.warn('[Supabase Auto-Expire]', err);
+        });
+
+        return {
+          ...res,
+          status: 'expired' as const,
+          expiredAt: now.toISOString(),
+        };
+      }
+
+      return res;
+    })
+  );
+
+  return {
+    updatedList,
+    expiredCount: newlyExpiredIds.length,
+    newlyExpiredIds,
+  };
+}
+
+/**
+ * Retrieves patron's locally stored reservation and synchronizes its auto-off status.
+ * If 15 minutes past the scheduled arrival has passed without arrival, marks it as expired (Turned OFF).
+ */
+export function syncAndGetLocalReservation(): TableReservation | null {
+  try {
+    const raw = localStorage.getItem('dewaan_my_reservation_v1');
+    if (!raw) return null;
+    const res = JSON.parse(raw);
+    const timing = getReservationTiming(res.reservationDate, res.timeSlot, 15);
+    
+    // If it was confirmed and time has exceeded the +15m cutoff, auto-turn OFF
+    if ((res.status === 'confirmed' || !res.status) && timing.isOverdue) {
+      res.status = 'expired';
+      res.expiredAt = new Date().toISOString();
+      localStorage.setItem('dewaan_my_reservation_v1', JSON.stringify(res));
+      if (res.id) {
+        updateReservationStatusInSupabase(res.id, 'expired', { expiredAt: res.expiredAt }).catch(() => {});
+      }
+    }
+    return res;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cancels patron's locally stored reservation and frees the table
+ */
+export function cancelLocalReservation(): boolean {
+  try {
+    const raw = localStorage.getItem('dewaan_my_reservation_v1');
+    if (raw) {
+      const res = JSON.parse(raw);
+      res.status = 'cancelled';
+      localStorage.setItem('dewaan_my_reservation_v1', JSON.stringify(res));
+      if (res.id) {
+        updateReservationStatusInSupabase(res.id, 'cancelled').catch(() => {});
+      }
+    }
+    return true;
+  } catch {
     return false;
   }
 }

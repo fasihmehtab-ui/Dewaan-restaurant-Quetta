@@ -4,11 +4,15 @@ import {
   ShoppingBag, Calendar, Users, Phone, MapPin, Clock, ArrowRight, 
   RefreshCw, LogOut, Search, Filter, ExternalLink, ChevronRight, Check,
   Copy, FileText, Sparkles, Navigation, Layers, Video, Image as ImageIcon,
-  Play, Upload, Film, Eye, Trash2, Camera, Pencil, Edit3, Plus, Save
+  Play, Upload, Film, Eye, Trash2, Camera, Pencil, Edit3, Plus, Save,
+  Timer, CheckCheck
 } from 'lucide-react';
 import { Order, OrderStatus, MenuItem, Category } from '../types';
 import { 
   TableReservation, 
+  ReservationStatus,
+  getReservationTiming,
+  checkAndExpireOverdueReservations,
   AdminUser, 
   checkAdminSlotClaimed, 
   registerMasterAdminSlot, 
@@ -143,7 +147,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   // Reservations filter & search
   const [resSearchQuery, setResSearchQuery] = useState('');
-  const [resStatusFilter, setResStatusFilter] = useState<'all' | 'confirmed' | 'cancelled'>('all');
+  const [resStatusFilter, setResStatusFilter] = useState<ReservationStatus | 'all'>('all');
+  const [autoExpiredNotice, setAutoExpiredNotice] = useState<string | null>(null);
 
   // Customer search
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
@@ -243,9 +248,56 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const loadReservations = async () => {
     setIsLoadingReservations(true);
     const data = await fetchReservationsFromSupabase();
-    setReservations(data);
+    // Real-time automatic check: expire any reservations exceeding the 15-minute arrival window
+    const { updatedList, expiredCount } = await checkAndExpireOverdueReservations(data, 15);
+    setReservations(updatedList);
+    if (expiredCount > 0) {
+      setAutoExpiredNotice(`⚡ ${expiredCount} reservation(s) automatically turned OFF after exceeding the 15-minute arrival window.`);
+      setTimeout(() => setAutoExpiredNotice(null), 7000);
+    }
     setIsLoadingReservations(false);
   };
+
+  // Live auto-expiry background sweep: Every 2 seconds, checks all active confirmed reservations.
+  // If customer has not arrived within 15 minutes of scheduled time, automatically turns OFF the reservation.
+  const [, setResClockTick] = useState(0);
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'reservations') return;
+
+    const interval = setInterval(() => {
+      setResClockTick((t) => t + 1);
+      setReservations((prev) => {
+        let hasExpired = false;
+        const now = new Date();
+        const next = prev.map((r) => {
+          if (r.status === 'confirmed') {
+            const timing = getReservationTiming(r.reservationDate, r.timeSlot, 15);
+            if (timing.isOverdue) {
+              hasExpired = true;
+              updateReservationStatusInSupabase(r.id, 'expired', {
+                expiredAt: now.toISOString(),
+              }).catch(() => {});
+              return {
+                ...r,
+                status: 'expired' as const,
+                expiredAt: now.toISOString(),
+              };
+            }
+          }
+          return r;
+        });
+
+        if (hasExpired) {
+          setAutoExpiredNotice('⚡ Reservation automatically turned OFF: 15-minute arrival window expired (table released).');
+          setTimeout(() => setAutoExpiredNotice(null), 6000);
+          return next;
+        }
+        return prev;
+      });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [isOpen, activeTab]);
 
   // Logout handler to immediately re-lock portal
   const handleLogout = () => {
@@ -437,12 +489,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     });
   };
 
-  // Handle reservation status update
-  const handleUpdateReservationStatus = async (id: string, newStatus: 'confirmed' | 'cancelled') => {
+  // Handle reservation status update (confirmed / arrived / expired / cancelled)
+  const handleUpdateReservationStatus = async (id: string, newStatus: ReservationStatus) => {
+    const now = new Date().toISOString();
     setReservations((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status: newStatus } : r))
+      prev.map((r) => (r.id === id ? { 
+        ...r, 
+        status: newStatus,
+        arrivedAt: newStatus === 'arrived' ? now : r.arrivedAt,
+        expiredAt: newStatus === 'expired' ? now : r.expiredAt,
+      } : r))
     );
-    await updateReservationStatusInSupabase(id, newStatus);
+    await updateReservationStatusInSupabase(id, newStatus, {
+      arrivedAt: newStatus === 'arrived' ? now : undefined,
+      expiredAt: newStatus === 'expired' ? now : undefined,
+    });
   };
 
   // Filtered orders
@@ -1658,35 +1719,152 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             )}
 
             {/* ===================================================================== */}
-            {/* TAB 2: TABLE RESERVATIONS MANAGEMENT                                 */}
+            {/* TAB 2: TABLE RESERVATIONS MANAGEMENT (15-MIN AUTO-OFF RULE ACTIVE)    */}
             {/* ===================================================================== */}
             {activeTab === 'reservations' && (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 
-                <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+                {/* Auto-Off Live Alert Banner */}
+                {autoExpiredNotice && (
+                  <div className="p-4 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-center justify-between shadow-lg animate-in fade-in duration-200">
+                    <div className="flex items-center gap-2.5">
+                      <Timer className="w-4 h-4 text-rose-400 shrink-0 animate-pulse" />
+                      <span className="font-medium">{autoExpiredNotice}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAutoExpiredNotice(null)}
+                      className="px-2.5 py-1 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-white text-[11px] transition-colors cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {/* 15-Minute Rule Policy & Summary Metrics Bento */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
+                  <div className="p-4 rounded-2xl bg-[#12141a] border border-white/[0.08]">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#8c8e96] block mb-1">
+                      Total Bookings
+                    </span>
+                    <div className="text-xl font-mono font-bold text-white tabular-nums">
+                      {reservations.length}
+                    </div>
+                    <span className="text-[10px] text-[#71747d] mt-0.5 block">
+                      All time palace tables
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-[#12141a] border border-white/[0.08]">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#8c8e96] block mb-1">
+                      Confirmed Active
+                    </span>
+                    <div className="text-xl font-mono font-bold text-[#dfba6c] tabular-nums">
+                      {reservations.filter((r) => r.status === 'confirmed').length}
+                    </div>
+                    <span className="text-[10px] text-[#71747d] mt-0.5 block">
+                      Awaiting arrival
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-[#12141a] border border-emerald-500/20 bg-emerald-950/10">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 block mb-1">
+                      Arrived & Seated
+                    </span>
+                    <div className="text-xl font-mono font-bold text-emerald-400 tabular-nums">
+                      {reservations.filter((r) => r.status === 'arrived').length}
+                    </div>
+                    <span className="text-[10px] text-emerald-400/70 mt-0.5 block">
+                      Guests dining
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-[#12141a] border border-rose-500/20 bg-rose-950/10">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-rose-300 block mb-1 flex items-center gap-1">
+                      <Timer className="w-3 h-3 text-rose-400" />
+                      <span>Auto-Off (+15m)</span>
+                    </span>
+                    <div className="text-xl font-mono font-bold text-rose-400 tabular-nums">
+                      {reservations.filter((r) => r.status === 'expired').length}
+                    </div>
+                    <span className="text-[10px] text-rose-300/70 mt-0.5 block">
+                      15m grace exceeded
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-[#12141a] border border-white/[0.08]">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#8c8e96] block mb-1">
+                      Cancelled
+                    </span>
+                    <div className="text-xl font-mono font-bold text-[#71747d] tabular-nums">
+                      {reservations.filter((r) => r.status === 'cancelled').length}
+                    </div>
+                    <span className="text-[10px] text-[#71747d] mt-0.5 block">
+                      Manual cancellations
+                    </span>
+                  </div>
+                </div>
+
+                {/* 15-Minute Policy Explanation Bar */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/30 via-[#151722] to-amber-950/20 border border-amber-500/25 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-[#dfba6c]/15 text-[#dfba6c] flex items-center justify-center shrink-0 mt-0.5">
+                      <Timer className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <strong className="text-white font-medium block">
+                        Real-Time 15-Minute Arrival Grace Period Policy:
+                      </strong>
+                      <span className="text-[#a0a3af] text-[11px] leading-relaxed block">
+                        If a customer does not arrive on time, an extra 15 minutes of grace is allowed. Once current time exceeds <span className="text-[#dfba6c] font-mono">Reserved Time + 15 mins</span> without the guest being marked as <strong className="text-emerald-400">"Arrived"</strong>, the reservation automatically turns <strong className="text-rose-400">OFF</strong> and the table is released.
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => loadReservations()}
+                    disabled={isLoadingReservations}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] font-bold text-xs shrink-0 shadow transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingReservations ? 'animate-spin' : ''}`} />
+                    <span>Run Expiry Sweep</span>
+                  </button>
+                </div>
+
+                {/* Filters & Search */}
+                <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between pt-1">
                   <div className="relative flex-1 max-w-md">
                     <Search className="w-4 h-4 text-[#727581] absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={resSearchQuery}
                       onChange={(e) => setResSearchQuery(e.target.value)}
-                      placeholder="Search guest name, phone, date..."
+                      placeholder="Search guest name, phone, date, table ID..."
                       className="w-full pl-10 pr-4 py-2.5 bg-[#12141a] border border-white/[0.08] rounded-full text-xs text-white placeholder-[#71747d] focus:outline-none focus:border-[#dfba6c]"
                     />
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    {(['all', 'confirmed', 'cancelled'] as const).map((st) => (
+                  <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+                    {(
+                      [
+                        { id: 'all', label: `All (${reservations.length})` },
+                        { id: 'confirmed', label: `Confirmed (${reservations.filter((r) => r.status === 'confirmed').length})` },
+                        { id: 'arrived', label: `Arrived (${reservations.filter((r) => r.status === 'arrived').length})` },
+                        { id: 'expired', label: `Auto-Off (+15m) (${reservations.filter((r) => r.status === 'expired').length})` },
+                        { id: 'cancelled', label: `Cancelled (${reservations.filter((r) => r.status === 'cancelled').length})` },
+                      ] as const
+                    ).map((tab) => (
                       <button
-                        key={st}
-                        onClick={() => setResStatusFilter(st)}
-                        className={`px-3 py-1.5 rounded-full capitalize text-xs transition-colors ${
-                          resStatusFilter === st
+                        key={tab.id}
+                        onClick={() => setResStatusFilter(tab.id as any)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-mono transition-colors whitespace-nowrap cursor-pointer ${
+                          resStatusFilter === tab.id
                             ? 'bg-[#dfba6c] text-[#090a0d] font-bold shadow-sm'
                             : 'bg-[#141620] text-[#8c8e96] hover:text-white border border-white/[0.06]'
                         }`}
                       >
-                        {st}
+                        {tab.label}
                       </button>
                     ))}
                   </div>
@@ -1697,7 +1875,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     <Calendar className="w-8 h-8 text-[#8c8e96] mx-auto mb-3 stroke-[1.5]" />
                     <h4 className="text-base font-serif text-white mb-1">No Reservations Found</h4>
                     <p className="text-xs text-[#8c8e96] font-light max-w-sm mx-auto">
-                      Table reservations booked via the website modal will sync to this table in real time.
+                      {resStatusFilter === 'expired'
+                        ? 'No reservations have exceeded the 15-minute arrival grace window yet.'
+                        : 'Table reservations booked via the website will sync here in real time.'}
                     </p>
                   </div>
                 ) : (
@@ -1706,72 +1886,166 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                       <table className="w-full text-left text-xs">
                         <thead className="bg-[#161822] border-b border-white/[0.08] text-[10px] font-mono uppercase tracking-wider text-[#a0a3af]">
                           <tr>
-                            <th className="py-3.5 px-4">Reservation ID</th>
-                            <th className="py-3.5 px-4">Guest Name & Phone</th>
-                            <th className="py-3.5 px-4">Date & Time</th>
-                            <th className="py-3.5 px-4">Party Size</th>
-                            <th className="py-3.5 px-4">Seating Area</th>
+                            <th className="py-3.5 px-4">Booking ID</th>
+                            <th className="py-3.5 px-4">Guest & Contact</th>
+                            <th className="py-3.5 px-4">Reserved Time</th>
+                            <th className="py-3.5 px-4">15m Cutoff</th>
+                            <th className="py-3.5 px-4">Party & Ambience</th>
+                            <th className="py-3.5 px-4">Live Arrival Status</th>
                             <th className="py-3.5 px-4">Notes</th>
-                            <th className="py-3.5 px-4">Status</th>
-                            <th className="py-3.5 px-4 text-right">Actions</th>
+                            <th className="py-3.5 px-4 text-right">Host Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.06] text-xs">
-                          {filteredReservations.map((res) => (
-                            <tr key={res.id} className="hover:bg-white/[0.02] transition-colors">
-                              <td className="py-4 px-4 font-mono font-bold text-white">
-                                {res.id}
-                              </td>
-                              <td className="py-4 px-4">
-                                <div className="font-medium text-white">{res.fullName}</div>
-                                <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] mt-0.5 font-semibold">
-                                  <Phone className="w-3 h-3" />
-                                  <a href={`tel:${res.phone}`} className="hover:underline">
-                                    {res.phone}
-                                  </a>
-                                </div>
-                              </td>
-                              <td className="py-4 px-4 font-mono text-[11px] text-[#e0e2ec]">
-                                <div>{res.reservationDate}</div>
-                                <span className="text-[#dfba6c]">{res.timeSlot}</span>
-                              </td>
-                              <td className="py-4 px-4 font-mono tabular-nums text-white">
-                                {res.guestCount} {res.guestCount === 1 ? 'Guest' : 'Guests'}
-                              </td>
-                              <td className="py-4 px-4 capitalize text-[#ebd8ab]">
-                                {res.seatingArea.replace(/_/g, ' ')} Lounge
-                              </td>
-                              <td className="py-4 px-4 text-[11px] text-[#8c8e96] max-w-xs truncate italic">
-                                {res.notes || '—'}
-                              </td>
-                              <td className="py-4 px-4">
-                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-mono capitalize ${
-                                  res.status === 'confirmed'
-                                    ? 'bg-emerald-950/50 border border-emerald-500/40 text-emerald-400'
-                                    : 'bg-rose-950/50 border border-rose-800/40 text-rose-300'
-                                }`}>
-                                  {res.status}
-                                </span>
-                              </td>
-                              <td className="py-4 px-4 text-right">
-                                {res.status === 'confirmed' ? (
-                                  <button
-                                    onClick={() => handleUpdateReservationStatus(res.id, 'cancelled')}
-                                    className="px-3 py-1 bg-rose-950/30 hover:bg-rose-900/40 text-rose-400 border border-rose-800/40 rounded-full text-[11px] transition-colors"
-                                  >
-                                    Cancel
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => handleUpdateReservationStatus(res.id, 'confirmed')}
-                                    className="px-3 py-1 bg-emerald-950/30 hover:bg-emerald-900/40 text-emerald-400 border border-emerald-500/30 rounded-full text-[11px] transition-colors"
-                                  >
-                                    Re-Confirm
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
+                          {filteredReservations.map((res) => {
+                            const timing = getReservationTiming(res.reservationDate, res.timeSlot, 15);
+
+                            return (
+                              <tr key={res.id} className="hover:bg-white/[0.02] transition-colors">
+                                <td className="py-4 px-4 font-mono font-bold text-white">
+                                  {res.id}
+                                </td>
+                                <td className="py-4 px-4">
+                                  <div className="font-medium text-white">{res.fullName}</div>
+                                  <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] mt-0.5 font-semibold">
+                                    <Phone className="w-3 h-3" />
+                                    <a href={`tel:${res.phone}`} className="hover:underline">
+                                      {res.phone}
+                                    </a>
+                                  </div>
+                                </td>
+
+                                {/* Reserved Date & Time */}
+                                <td className="py-4 px-4 font-mono text-[11px]">
+                                  <div className="text-white font-medium">{res.reservationDate}</div>
+                                  <span className="text-[#dfba6c] font-semibold">{res.timeSlot}</span>
+                                </td>
+
+                                {/* 15m Grace Cutoff */}
+                                <td className="py-4 px-4 font-mono text-[11px]">
+                                  <div className="text-[#ebd8ab] font-bold">
+                                    {timing.formattedCutoffTime}
+                                  </div>
+                                  <span className="text-[10px] text-[#71747d] block">
+                                    +15m Arrival Cutoff
+                                  </span>
+                                </td>
+
+                                {/* Party & Lounge */}
+                                <td className="py-4 px-4 font-mono tabular-nums text-white">
+                                  <div>{res.guestCount} {res.guestCount === 1 ? 'Guest' : 'Guests'}</div>
+                                  <span className="text-[11px] text-[#ebd8ab] capitalize block font-sans">
+                                    {res.seatingArea.replace(/_/g, ' ')} Lounge
+                                  </span>
+                                </td>
+
+                                {/* Live Arrival Status */}
+                                <td className="py-4 px-4">
+                                  {res.status === 'arrived' ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 font-bold">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                      <span>Arrived & Seated</span>
+                                    </span>
+                                  ) : res.status === 'expired' ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono bg-rose-950/60 border border-rose-500/40 text-rose-300 font-bold">
+                                      <Timer className="w-3 h-3 text-rose-400" />
+                                      <span>Auto-Off (15m Expired)</span>
+                                    </span>
+                                  ) : res.status === 'cancelled' ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono bg-white/[0.06] border border-white/[0.1] text-[#8c8e96]">
+                                      <span>Cancelled</span>
+                                    </span>
+                                  ) : (
+                                    /* CONFIRMED: check live timing */
+                                    timing.isInGracePeriod ? (
+                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono bg-amber-950/60 border border-amber-500/50 text-amber-300 font-bold animate-pulse">
+                                        <Timer className="w-3 h-3 text-amber-400" />
+                                        <span>Grace Active: {timing.graceCountdownFormatted} Left</span>
+                                      </span>
+                                    ) : timing.isOverdue ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono bg-rose-950/60 border border-rose-500/40 text-rose-300 font-bold">
+                                        <AlertCircle className="w-3 h-3 text-rose-400" />
+                                        <span>Auto-Off Overdue (+{timing.minutesOverdue}m)</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono bg-blue-950/40 border border-blue-500/30 text-blue-300">
+                                        <Clock className="w-3 h-3 text-blue-400" />
+                                        <span>
+                                          Upcoming {timing.minutesUntilScheduled > 60 ? `(${Math.floor(timing.minutesUntilScheduled / 60)}h)` : `(${timing.minutesUntilScheduled}m)`}
+                                        </span>
+                                      </span>
+                                    )
+                                  )}
+                                </td>
+
+                                <td className="py-4 px-4 text-[11px] text-[#8c8e96] max-w-xs truncate italic">
+                                  {res.notes || '—'}
+                                </td>
+
+                                {/* Host Actions */}
+                                <td className="py-4 px-4 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {res.status === 'confirmed' && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateReservationStatus(res.id, 'arrived')}
+                                          className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-full text-[11px] transition-colors shadow-sm cursor-pointer"
+                                          title="Guest has arrived at the palace, mark seated"
+                                        >
+                                          <Check className="w-3 h-3" />
+                                          <span>Mark Arrived</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateReservationStatus(res.id, 'expired')}
+                                          className="px-2.5 py-1 bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 rounded-full text-[11px] transition-colors cursor-pointer"
+                                          title="Turn OFF reservation and release table"
+                                        >
+                                          Turn OFF
+                                        </button>
+                                      </>
+                                    )}
+
+                                    {res.status === 'expired' && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateReservationStatus(res.id, 'arrived')}
+                                          className="inline-flex items-center gap-1 px-3 py-1 bg-amber-500 hover:bg-amber-400 text-[#090a0d] font-bold rounded-full text-[11px] transition-colors shadow-sm cursor-pointer"
+                                          title="Guest arrived late, reinstate and seat"
+                                        >
+                                          <CheckCheck className="w-3 h-3" />
+                                          <span>Reinstate & Seat</span>
+                                        </button>
+                                      </>
+                                    )}
+
+                                    {res.status === 'arrived' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateReservationStatus(res.id, 'confirmed')}
+                                        className="px-2.5 py-1 bg-white/[0.06] hover:bg-white/[0.12] text-[#8c8e96] hover:text-white rounded-full text-[11px] transition-colors cursor-pointer"
+                                        title="Revert arrival state"
+                                      >
+                                        Undo Arrival
+                                      </button>
+                                    )}
+
+                                    {res.status === 'cancelled' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateReservationStatus(res.id, 'confirmed')}
+                                        className="px-3 py-1 bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-500/30 rounded-full text-[11px] transition-colors cursor-pointer"
+                                      >
+                                        Re-Confirm
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
