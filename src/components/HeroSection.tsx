@@ -43,10 +43,35 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             Slow-Cooked Dum Handis, Delivered Hot to Your Doorstep.
           </h1>
 
-          <p className="text-base sm:text-lg text-[#a6a9b6] leading-relaxed mb-10 max-w-xl font-light">
-            Indulge in 200-year-old royal recipes simmered under dough seals with 32 hand-ground spices, 
-            tender bone-in goat shanks, and Kashmiri saffron. Customized to your exact heat preference.
-          </p>
+          {/* Best Shawarma in Quetta Spotlight Banner */}
+          <div className="mb-8 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-[#dfba6c]/15 via-[#800000]/25 to-black/40 border border-[#dfba6c]/30 backdrop-blur-md shadow-xl animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center justify-between gap-2 text-xs font-mono text-[#dfba6c] font-semibold mb-2">
+              <span className="flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-[#dfba6c]" />
+                <span>Best Shawarma in Quetta · کوئٹہ کا بہترین شوارما</span>
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-[#dfba6c]/20 text-[10px] font-bold text-[#dfba6c]">
+                Most Ordered
+              </span>
+            </div>
+            <h2 className="text-base sm:text-xl font-bold text-white mb-2 leading-snug font-serif">
+              کوئٹہ میں سب سے بیسٹ شوارما صرف دیوان ریسٹورنٹ پر!
+            </h2>
+            <p className="text-xs sm:text-sm text-[#ebd8ab] leading-relaxed font-light mb-3 font-sans">
+              اگر آپ کوئٹہ میں شوارما کے شوقین ہیں تو دیوان آپ کے لیے بہترین جگہ ہے۔ ہمارے پاس شوارما کی کئی مختلف اقسام ہیں جو اپنے ذائقے میں سب سے الگ ہیں۔
+            </p>
+            <div className="flex flex-wrap items-center gap-2 pt-2.5 border-t border-white/[0.08] text-[11px]">
+              <span className="px-2.5 py-1 rounded-full bg-white/[0.05] border border-white/[0.08] text-[#ebd8ab]">
+                🌯 اسپیشل عربین چکن شوارما
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-white/[0.05] border border-white/[0.08] text-[#ebd8ab]">
+                🧀 کوئٹہ چیزی بیف شوارما
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-white/[0.05] border border-white/[0.08] text-[#ebd8ab]">
+                🍽️ اوپن دسترخوان شوارما پلیٹر
+              </span>
+            </div>
+          </div>
 
           {/* Primary Action Buttons */}
           <div className="flex flex-wrap items-center gap-4 mb-14">

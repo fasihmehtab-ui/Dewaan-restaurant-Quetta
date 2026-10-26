@@ -5,7 +5,7 @@ import {
   RefreshCw, LogOut, Search, Filter, ExternalLink, ChevronRight, Check,
   Copy, FileText, Sparkles, Navigation, Layers, Video, Image as ImageIcon,
   Play, Upload, Film, Eye, Trash2, Camera, Pencil, Edit3, Plus, Save,
-  Timer, CheckCheck
+  Timer, CheckCheck, MessageCircle
 } from 'lucide-react';
 import { Order, OrderStatus, MenuItem, Category } from '../types';
 import { 
@@ -35,6 +35,7 @@ import {
 } from '../utils/supabaseService';
 import { supabase, SUPABASE_CONFIG } from '../utils/supabaseClient';
 import { formatPKR } from '../utils/currency';
+import { getSavedOrders } from '../utils/orderStorage';
 import { ManageDishes } from './ManageDishes';
 
 interface AdminPortalProps {
@@ -56,8 +57,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   menuItems = [],
   onUpdateMenuItems = () => {},
 }) => {
-  // Safe array references
-  const safeOrders = Array.isArray(orders) ? orders : [];
+  // Safe array references: Combines orders prop with local storage cache so all orders are always visible
+  const safeOrders = useMemo(() => {
+    const list = Array.isArray(orders) ? [...orders] : [];
+    try {
+      const local = getSavedOrders();
+      const map = new Map<string, Order>();
+      list.forEach((o) => map.set(o.id, o));
+      local.forEach((o) => {
+        if (!map.has(o.id)) map.set(o.id, o);
+      });
+      return Array.from(map.values()).sort(
+        (a, b) => new Date(b.placedAt).getTime() - new Date(a.placedAt).getTime()
+      );
+    } catch {
+      return list;
+    }
+  }, [orders]);
   const safeMenuItems = Array.isArray(menuItems) ? menuItems : [];
 
   // Admin session - strictly locked unless authenticated as fasihmehtab@gmail.com
@@ -135,7 +151,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [isLoadingReservations, setIsLoadingReservations] = useState(false);
 
   // Orders filter & search
-  const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatus | 'all'>('all');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatus | 'all' | 'whatsapp'>('all');
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<{
@@ -244,6 +260,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       mounted = false;
     };
   }, [isOpen, menuItems]);
+
+  // Live orders auto-refresh: Automatically sync orders from Supabase when portal opens or orders tab is viewed
+  useEffect(() => {
+    if (!isOpen) return;
+    if (onRefreshOrders) onRefreshOrders();
+    if (activeTab === 'orders') {
+      const interval = setInterval(() => {
+        if (onRefreshOrders) onRefreshOrders();
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isOpen, activeTab, onRefreshOrders]);
 
   const loadReservations = async () => {
     setIsLoadingReservations(true);
@@ -506,10 +534,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     });
   };
 
+  // Check if an order was placed via WhatsApp
+  const isWhatsAppOrder = (o: Order) => {
+    return o.paymentMethod === 'whatsapp' ||
+           o.orderSource === 'whatsapp' ||
+           o.id.startsWith('DW-WA') ||
+           o.id.startsWith('DW-CUST') ||
+           Boolean(o.customer?.deliveryNotes && o.customer.deliveryNotes.includes('[WhatsApp'));
+  };
+
   // Filtered orders
   const filteredOrders = useMemo(() => {
     return safeOrders.filter((o) => {
-      if (orderStatusFilter !== 'all' && o.status !== orderStatusFilter) {
+      if (orderStatusFilter === 'whatsapp') {
+        if (!isWhatsAppOrder(o)) return false;
+      } else if (orderStatusFilter !== 'all' && o.status !== orderStatusFilter) {
         return false;
       }
       if (orderSearchQuery.trim()) {
@@ -518,7 +557,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         const matchesName = o.customer.fullName.toLowerCase().includes(q);
         const matchesPhone = o.customer.phone.toLowerCase().includes(q);
         const matchesAddr = o.customer.address.toLowerCase().includes(q);
-        if (!matchesId && !matchesName && !matchesPhone && !matchesAddr) return false;
+        const matchesNotes = (o.customer.deliveryNotes || '').toLowerCase().includes(q);
+        if (!matchesId && !matchesName && !matchesPhone && !matchesAddr && !matchesNotes) return false;
       }
       return true;
     });
@@ -1552,21 +1592,68 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none text-xs">
-                    {(['all', 'confirmed', 'kitchen_dum', 'packing_check', 'out_for_delivery', 'delivered'] as const).map((st) => (
-                      <button
-                        key={st}
-                        onClick={() => setOrderStatusFilter(st)}
-                        className={`px-3 py-1.5 rounded-full capitalize whitespace-nowrap text-xs transition-colors ${
-                          orderStatusFilter === st
-                            ? 'bg-[#dfba6c] text-[#090a0d] font-bold shadow-sm'
-                            : 'bg-[#141620] text-[#8c8e96] hover:text-white border border-white/[0.06]'
-                        }`}
-                      >
-                        {st.replace(/_/g, ' ')}
-                      </button>
-                    ))}
+                    {(['all', 'whatsapp', 'confirmed', 'kitchen_dum', 'packing_check', 'out_for_delivery', 'delivered'] as const).map((st) => {
+                      const count = st === 'whatsapp' 
+                        ? safeOrders.filter(isWhatsAppOrder).length 
+                        : st === 'all' 
+                        ? safeOrders.length 
+                        : safeOrders.filter((o) => o.status === st).length;
+
+                      const isSelected = orderStatusFilter === st;
+
+                      return (
+                        <button
+                          key={st}
+                          onClick={() => setOrderStatusFilter(st)}
+                          className={`px-3 py-1.5 rounded-full capitalize whitespace-nowrap text-xs transition-colors flex items-center gap-1.5 cursor-pointer ${
+                            isSelected
+                              ? st === 'whatsapp'
+                                ? 'bg-[#25D366] text-[#090a0d] font-bold shadow-md shadow-[#25D366]/20'
+                                : 'bg-[#dfba6c] text-[#090a0d] font-bold shadow-sm'
+                              : st === 'whatsapp'
+                              ? 'bg-[#25D366]/15 text-[#25D366] hover:bg-[#25D366]/25 border border-[#25D366]/30'
+                              : 'bg-[#141620] text-[#8c8e96] hover:text-white border border-white/[0.06]'
+                          }`}
+                        >
+                          {st === 'whatsapp' && <MessageCircle className="w-3.5 h-3.5 fill-current" />}
+                          <span>
+                            {st === 'whatsapp' ? `WhatsApp Orders (${count})` : `${st.replace(/_/g, ' ')} (${count})`}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
+
+                {/* Dedicated WhatsApp Channel Status Banner */}
+                {orderStatusFilter === 'whatsapp' && (
+                  <div className="p-4 rounded-2xl bg-[#25D366]/10 border border-[#25D366]/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-[#25D366]/20 text-[#25D366] flex items-center justify-center shrink-0">
+                        <MessageCircle className="w-5 h-5 fill-current" />
+                      </div>
+                      <div>
+                        <h5 className="font-semibold text-white text-xs flex items-center gap-2">
+                          <span>WhatsApp Orders Live Channel</span>
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-[#25D366] text-[#090a0d] font-bold">
+                            Auto-Synced with Supabase
+                          </span>
+                        </h5>
+                        <p className="text-[11px] text-[#a4a7b5] mt-0.5">
+                          Orders placed via Dastarkhwan Bag, Menu dish WhatsApp buttons, Customizer, and Custom Requests are recorded in Supabase and displayed below.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { if (onRefreshOrders) onRefreshOrders(); }}
+                      className="px-3.5 py-1.5 rounded-full bg-[#25D366] hover:bg-[#20ba5a] text-[#090a0d] font-bold text-xs flex items-center gap-1.5 shadow-sm shrink-0 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Refresh Channel</span>
+                    </button>
+                  </div>
+                )}
 
                 {/* Orders Table */}
                 {filteredOrders.length === 0 ? (
@@ -1574,7 +1661,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     <ShoppingBag className="w-8 h-8 text-[#8c8e96] mx-auto mb-3 stroke-[1.5]" />
                     <h4 className="text-base font-serif text-white mb-1">No Orders Found</h4>
                     <p className="text-xs text-[#8c8e96] font-light max-w-sm mx-auto">
-                      {orderSearchQuery ? 'Try adjusting your search criteria.' : 'When customers book orders on the website, they will immediately appear here.'}
+                      {orderSearchQuery ? 'Try adjusting your search criteria.' : 'When customers book orders on the website or via WhatsApp, they will immediately appear here.'}
                     </p>
                   </div>
                 ) : (
@@ -1592,116 +1679,158 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.06] text-xs">
-                          {filteredOrders.map((ord) => (
-                            <tr key={ord.id} className="hover:bg-white/[0.02] transition-colors">
-                              
-                              {/* Order ID & Time */}
-                              <td className="py-4 px-4 align-top">
-                                <span className="font-mono font-bold text-white text-sm block">
-                                  {ord.id}
-                                </span>
-                                <span className="text-[11px] text-[#71747d] font-mono block mt-0.5">
-                                  {new Date(ord.placedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })} · {new Date(ord.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </span>
-                                <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[9px] font-mono uppercase ${
-                                  ord.orderType === 'delivery' ? 'bg-[#dfba6c]/15 text-[#ebd8ab]' : 'bg-blue-950/40 text-blue-300'
-                                }`}>
-                                  {ord.orderType}
-                                </span>
-                              </td>
+                          {filteredOrders.map((ord) => {
+                            const isWA = isWhatsAppOrder(ord);
 
-                              {/* Customer Details */}
-                              <td className="py-4 px-4 align-top">
-                                <div className="font-medium text-white">{ord.customer.fullName}</div>
-                                <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] mt-0.5 font-semibold">
-                                  <Phone className="w-3 h-3" />
-                                  <a href={`tel:${ord.customer.phone}`} className="hover:underline">
-                                    {ord.customer.phone}
-                                  </a>
-                                </div>
-                                <div className="text-[11px] text-[#8c8e96] max-w-xs mt-1 line-clamp-2 font-light">
-                                  {ord.customer.address}
-                                </div>
-                              </td>
-
-                              {/* Items */}
-                              <td className="py-4 px-4 align-top">
-                                <div className="space-y-1 max-w-xs">
-                                  {ord.items.map((it, idx) => (
-                                    <div key={idx} className="text-[11px]">
-                                      <span className="font-mono text-[#dfba6c] font-bold mr-1.5">{it.quantity}x</span>
-                                      <span className="text-white font-medium">{it.menuItem.name}</span>
-                                      <span className="text-[10px] text-[#8c8e96] block pl-4 font-light">
-                                        {it.customization.portion.name} · {it.customization.spiceLevel.replace('_', ' ')}
+                            return (
+                              <tr key={ord.id} className="hover:bg-white/[0.02] transition-colors">
+                                
+                                {/* Order ID & Time */}
+                                <td className="py-4 px-4 align-top">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-mono font-bold text-white text-sm">
+                                      {ord.id}
+                                    </span>
+                                    {isWA && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono bg-[#25D366]/20 border border-[#25D366]/40 text-[#25D366] font-bold">
+                                        <MessageCircle className="w-2.5 h-2.5 fill-current" />
+                                        <span>WhatsApp 💬</span>
                                       </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[11px] text-[#71747d] font-mono block mt-0.5">
+                                    {new Date(ord.placedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })} · {new Date(ord.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                  <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[9px] font-mono uppercase ${
+                                    ord.orderType === 'delivery' ? 'bg-[#dfba6c]/15 text-[#ebd8ab]' : 'bg-blue-950/40 text-blue-300'
+                                  }`}>
+                                    {ord.orderType}
+                                  </span>
+                                </td>
+
+                                {/* Customer Details */}
+                                <td className="py-4 px-4 align-top">
+                                  <div className="font-medium text-white">{ord.customer.fullName}</div>
+                                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                    <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] font-semibold">
+                                      <Phone className="w-3 h-3" />
+                                      <a href={`tel:${ord.customer.phone}`} className="hover:underline">
+                                        {ord.customer.phone}
+                                      </a>
                                     </div>
-                                  ))}
-                                </div>
-                              </td>
+                                    {ord.customer.phone && (
+                                      <a
+                                        href={`https://wa.me/${ord.customer.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Salam ${ord.customer.fullName}! Regarding your Dewaan Quetta Order ${ord.id}: `)}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#25D366]/15 hover:bg-[#25D366]/30 text-[#25D366] text-[10px] font-mono transition-colors"
+                                        title="Chat directly on WhatsApp"
+                                      >
+                                        <MessageCircle className="w-2.5 h-2.5 fill-current" />
+                                        <span>Chat</span>
+                                      </a>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-[#8c8e96] max-w-xs mt-1 line-clamp-2 font-light">
+                                    {ord.customer.address}
+                                  </div>
+                                  {ord.customer.deliveryNotes && (
+                                    <div className="text-[10px] text-[#ebd8ab] bg-white/[0.03] p-1.5 rounded-lg border border-white/[0.04] mt-1 italic">
+                                      {ord.customer.deliveryNotes}
+                                    </div>
+                                  )}
+                                </td>
 
-                              {/* Total */}
-                              <td className="py-4 px-4 align-top">
-                                <div className="font-mono font-bold text-[#dfba6c] text-sm tabular-nums">
-                                  {formatPKR(ord.total)}
-                                </div>
-                                <span className="text-[10px] text-[#71747d] block capitalize font-mono mt-0.5">
-                                  {ord.paymentMethod.replace('_', ' ')}
-                                </span>
-                              </td>
+                                {/* Items */}
+                                <td className="py-4 px-4 align-top">
+                                  <div className="space-y-1 max-w-xs">
+                                    {ord.items.map((it, idx) => (
+                                      <div key={idx} className="text-[11px]">
+                                        <span className="font-mono text-[#dfba6c] font-bold mr-1.5">{it.quantity}x</span>
+                                        <span className="text-white font-medium">{it.menuItem.name}</span>
+                                        <span className="text-[10px] text-[#8c8e96] block pl-4 font-light">
+                                          {it.customization.portion.name} · {it.customization.spiceLevel.replace('_', ' ')}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </td>
 
-                              {/* Status Controller */}
-                              <td className="py-4 px-4 align-top">
-                                <select
-                                  value={ord.status}
-                                  onChange={(e) => handleStatusChange(ord, e.target.value as OrderStatus)}
-                                  className="px-3 py-1.5 bg-[#171922] border border-white/[0.1] rounded-xl text-xs text-[#ebd8ab] font-medium focus:outline-none focus:border-[#dfba6c]"
-                                >
-                                  <option value="confirmed">Confirmed</option>
-                                  <option value="kitchen_dum">Kitchen Dum Cooking</option>
-                                  <option value="packing_check">Tamper Packaging</option>
-                                  <option value="out_for_delivery">Out For Delivery (Allah Dad)</option>
-                                  <option value="delivered">Delivered</option>
-                                </select>
-                              </td>
+                                {/* Total */}
+                                <td className="py-4 px-4 align-top">
+                                  <div className="font-mono font-bold text-[#dfba6c] text-sm tabular-nums">
+                                    {formatPKR(ord.total)}
+                                  </div>
+                                  <span className="text-[10px] text-[#71747d] block capitalize font-mono mt-0.5">
+                                    {ord.paymentMethod === 'whatsapp' ? 'WhatsApp (COD)' : ord.paymentMethod.replace('_', ' ')}
+                                  </span>
+                                </td>
 
-                              {/* Actions */}
-                              <td className="py-4 px-4 align-top text-right">
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedOrder({
-                                        customer_name: ord.customer.fullName || 'Royal Patron',
-                                        phone: ord.customer.phone || '+92...',
-                                        total: ord.total,
-                                        items: (
-                                          <div className="space-y-1">
-                                            {ord.items.map((it, idx) => (
-                                              <div key={idx} className="flex justify-between items-center text-xs">
-                                                <span>{it.quantity}x {it.menuItem.name}</span>
-                                                <span className="font-mono">Rs. {it.totalPrice}</span>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        ),
-                                      });
-                                    }}
-                                    className="px-3 py-1.5 rounded-full bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                                {/* Status Controller */}
+                                <td className="py-4 px-4 align-top">
+                                  <select
+                                    value={ord.status}
+                                    onChange={(e) => handleStatusChange(ord, e.target.value as OrderStatus)}
+                                    className="px-3 py-1.5 bg-[#171922] border border-white/[0.1] rounded-xl text-xs text-[#ebd8ab] font-medium focus:outline-none focus:border-[#dfba6c]"
                                   >
-                                    Print Receipt
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedOrderForModal(ord)}
-                                    className="px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#ebd8ab] text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
-                                  >
-                                    Details
-                                  </button>
-                                </div>
-                              </td>
+                                    <option value="confirmed">Confirmed</option>
+                                    <option value="kitchen_dum">Kitchen Dum Cooking</option>
+                                    <option value="packing_check">Tamper Packaging</option>
+                                    <option value="out_for_delivery">Out For Delivery (Allah Dad)</option>
+                                    <option value="delivered">Delivered</option>
+                                  </select>
+                                </td>
 
-                            </tr>
-                          ))}
+                                {/* Actions */}
+                                <td className="py-4 px-4 align-top text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {ord.customer.phone && (
+                                      <a
+                                        href={`https://wa.me/${ord.customer.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Salam ${ord.customer.fullName}! Your Dewaan Royal Order ${ord.id} status is now: ${ord.status.replace(/_/g, ' ')}.`)}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="p-1.5 rounded-full bg-[#25D366]/20 hover:bg-[#25D366]/30 text-[#25D366] transition-colors"
+                                        title="Send status update on WhatsApp"
+                                      >
+                                        <MessageCircle className="w-3.5 h-3.5 fill-current" />
+                                      </a>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedOrder({
+                                          customer_name: ord.customer.fullName || 'Royal Patron',
+                                          phone: ord.customer.phone || '+92...',
+                                          total: ord.total,
+                                          items: (
+                                            <div className="space-y-1">
+                                              {ord.items.map((it, idx) => (
+                                                <div key={idx} className="flex justify-between items-center text-xs">
+                                                  <span>{it.quantity}x {it.menuItem.name}</span>
+                                                  <span className="font-mono">Rs. {it.totalPrice}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ),
+                                        });
+                                      }}
+                                      className="px-3 py-1.5 rounded-full bg-[#dfba6c] hover:bg-[#ebd8ab] text-[#090a0d] text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                                    >
+                                      Print Receipt
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedOrderForModal(ord)}
+                                      className="px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#ebd8ab] text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
+                                    >
+                                      Details
+                                    </button>
+                                  </div>
+                                </td>
+
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

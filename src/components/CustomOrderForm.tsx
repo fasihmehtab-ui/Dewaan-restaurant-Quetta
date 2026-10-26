@@ -1,27 +1,133 @@
 "use client";
 import React, { useState } from 'react';
 import { MessageCircle, Send, MapPin, Phone, User, Utensils, Sparkles, X, CheckCircle2 } from 'lucide-react';
+import { Order } from '../types';
+import { saveOrderToSupabase } from '../utils/supabaseService';
+import { appendSavedOrder } from '../utils/orderStorage';
 
 interface CustomOrderFormProps {
   onClose?: () => void;
   isModal?: boolean;
+  onOrderPlaced?: (order: Order) => void;
 }
 
-export default function CustomOrderForm({ onClose, isModal = false }: CustomOrderFormProps) {
+export default function CustomOrderForm({ onClose, isModal = false, onOrderPlaced }: CustomOrderFormProps) {
   const [type, setType] = useState('Home Delivery');
   const [submitted, setSubmitted] = useState(false);
   const [lastUrl, setLastUrl] = useState<string | null>(null);
+  const [orderReference, setOrderReference] = useState<string>('');
 
   const handleSubmit = (e: any) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const name = formData.get('name') || '';
-    const phone = formData.get('phone') || '';
-    const address = formData.get('address') || (type === 'Home Delivery' ? '' : 'Dine-In / Takeaway at Restaurant');
-    const order = formData.get('order') || '';
+    const name = String(formData.get('name') || '').trim();
+    const phone = String(formData.get('phone') || '').trim();
+    const address = String(formData.get('address') || (type === 'Home Delivery' ? '' : 'Dine-In / Takeaway at Restaurant')).trim();
+    const order = String(formData.get('order') || '').trim();
 
-    // Message formatted with encoding
-    const message = `*New Custom Order - Dewaan Quetta*%0AName: ${encodeURIComponent(String(name))}%0APhone: ${encodeURIComponent(String(phone))}%0AType: ${encodeURIComponent(type)}%0AAddress: ${encodeURIComponent(String(address))}%0AOrder Detail: ${encodeURIComponent(String(order))}`;
+    const orderId = `DW-WA-${Math.floor(1000 + Math.random() * 9000)}`;
+    setOrderReference(orderId);
+
+    const now = new Date();
+    const estArrival = new Date(now.getTime() + 45 * 60 * 1000);
+
+    // Create formal Order record for Supabase & Admin Portal
+    const customOrderRecord: Order = {
+      id: orderId,
+      placedAt: now.toISOString(),
+      status: 'confirmed',
+      orderType: type === 'Home Delivery' ? 'delivery' : 'pickup',
+      items: [
+        {
+          cartItemId: `item-cust-${Date.now()}`,
+          menuItem: {
+            id: 'custom-special-dish',
+            name: `Special Custom Dish (${order.slice(0, 35)}...)`,
+            category: 'handi',
+            basePrice: 0,
+            image: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80',
+            description: order,
+            culinaryNotes: 'Special custom kitchen preparation requested via WhatsApp',
+            ingredients: ['Authentic Awadhi Spices', 'Chef Choice Cuts'],
+            spiceLevelDefault: 'medium',
+            spiceCustomizable: true,
+            portionOptions: [{ id: 'custom', name: 'Custom Serving', priceDelta: 0, serving: 'Special Custom' }],
+            prepTime: '45 mins',
+            dietary: ['halal', 'chef_signature'],
+          },
+          customization: {
+            portion: { id: 'custom', name: 'Custom Banquet', priceDelta: 0, serving: 'Special Custom' },
+            spiceLevel: 'medium',
+            selectedAddOns: [],
+            specialInstructions: order,
+          },
+          unitPrice: 0,
+          quantity: 1,
+          totalPrice: 0,
+        },
+      ],
+      subtotal: 0,
+      deliveryFee: type === 'Home Delivery' ? 180 : 0,
+      packagingFee: 120,
+      tax: 0,
+      tip: 0,
+      discount: 0,
+      total: 0,
+      customer: {
+        fullName: name || 'Custom Order Guest',
+        phone: phone || '+92 311 8427913',
+        email: '',
+        address: address || 'Address to be confirmed via WhatsApp',
+        deliveryNotes: `[WhatsApp Custom Order] ${order}`,
+      },
+      paymentMethod: 'whatsapp',
+      orderSource: 'whatsapp',
+      estimatedDeliveryMinutes: 45,
+      estimatedArrivalTimestamp: estArrival.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      driver: {
+        name: 'Allah Dad',
+        phone: '+923118427913',
+        rating: 4.98,
+        tripsCount: 2140,
+        vehicle: 'Honda CG-125 Royal Express Cargo',
+        plateNumber: 'QTA-772-EXP',
+        avatarText: 'AD',
+        currentLat: 30.1872,
+        currentLng: 66.9961,
+        progressPercent: 10,
+      },
+      milestones: [
+        {
+          stage: 'confirmed',
+          title: 'Custom Order Recorded & Dispatched to WhatsApp',
+          subtitle: 'Chef Ustads review special culinary requirements',
+          timestamp: 'Just now',
+          completed: true,
+          active: true,
+        },
+      ],
+      chatMessages: [
+        {
+          sender: 'restaurant',
+          text: `Salam ${name || 'Patron'}! We received your custom WhatsApp order (${orderId}). Ustads are reviewing your instructions: "${order}".`,
+          time: 'Just now',
+        },
+      ],
+    };
+
+    // 1. Save to Supabase backend table
+    saveOrderToSupabase(customOrderRecord).catch((err) => console.warn('[Supabase Custom Order]', err));
+
+    // 2. Save to local storage for instant sync with tracking & admin panel
+    appendSavedOrder(customOrderRecord);
+
+    // 3. Immediately notify parent state so Admin Portal and Live Tracker see it
+    if (onOrderPlaced) {
+      onOrderPlaced(customOrderRecord);
+    }
+
+    // 3. Message formatted with encoding
+    const message = `*👑 New Custom Order - Dewaan Quetta*%0A*Order Reference:* ${orderId} (Saved in System)%0A*Name:* ${encodeURIComponent(String(name))}%0A*Phone:* ${encodeURIComponent(String(phone))}%0A*Type:* ${encodeURIComponent(type)}%0A*Address:* ${encodeURIComponent(String(address))}%0A*Order Details:* ${encodeURIComponent(String(order))}%0A%0A_Status: Saved to Supabase & Dewaan Admin Portal_`;
     
     // Dewaan Quetta WhatsApp number
     const whatsappUrl = `https://wa.me/923118427913?text=${message}`;
@@ -29,10 +135,19 @@ export default function CustomOrderForm({ onClose, isModal = false }: CustomOrde
     setSubmitted(true);
 
     try {
-      window.open(whatsappUrl, '_blank');
+      const link = document.createElement('a');
+      link.href = whatsappUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } catch {
-      // In case window.open is blocked by popup blocker
-      window.location.href = whatsappUrl;
+      try {
+        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      } catch {
+        // Safe fallback
+      }
     }
   };
 
@@ -72,11 +187,16 @@ export default function CustomOrderForm({ onClose, isModal = false }: CustomOrde
           <div className="w-16 h-16 rounded-full bg-emerald-950/60 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto">
             <CheckCircle2 className="w-8 h-8" />
           </div>
-          <h4 className="font-serif text-xl font-bold text-white">
-            شکریہ! آپ کا کسٹم آرڈر تیار ہے
-          </h4>
+          <div>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 font-bold block mb-1">
+              Order ID: {orderReference}
+            </span>
+            <h4 className="font-serif text-xl font-bold text-white">
+              شکریہ! آپ کا کسٹم آرڈر محفوظ ہو چکا ہے
+            </h4>
+          </div>
           <p className="text-xs text-[#9c9ea6] max-w-sm mx-auto leading-relaxed">
-            اگر واٹس ایپ خود بخود نہیں کھلا، تو نیچے دیے گئے بٹن پر کلک کریں:
+            آپ کا آرڈر سپابیس (Supabase) اور ایڈمن پورٹل میں محفوظ ہو چکا ہے۔ اگر واٹس ایپ خود بخود نہیں کھلا، تو نیچے دیے گئے بٹن پر کلک کریں:
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
             <a

@@ -151,7 +151,8 @@ export interface Order {
     aptSuite?: string;
     deliveryNotes?: string;
   };
-  paymentMethod: 'card' | 'cod' | 'apple_pay';
+  paymentMethod: 'card' | 'cod' | 'apple_pay' | 'whatsapp';
+  orderSource?: 'app' | 'whatsapp' | 'custom_form';
   estimatedDeliveryMinutes: number;
   estimatedArrivalTimestamp: string;
   driver?: DeliveryDriver;

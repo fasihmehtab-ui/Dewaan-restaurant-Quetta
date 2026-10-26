@@ -131,6 +131,31 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Periodic background order sync: fetches newest orders from Supabase (including WhatsApp orders)
+  useEffect(() => {
+    const syncOrdersFromSupabase = () => {
+      fetchOrdersFromSupabase().then((supabaseOrders) => {
+        if (supabaseOrders && supabaseOrders.length > 0) {
+          setOrders((prev) => {
+            const localSaved = getSavedOrders();
+            const map = new Map<string, Order>();
+            supabaseOrders.forEach((o) => map.set(o.id, o));
+            localSaved.forEach((o) => {
+              if (!map.has(o.id)) map.set(o.id, o);
+            });
+            prev.forEach((o) => {
+              if (!map.has(o.id)) map.set(o.id, o);
+            });
+            return Array.from(map.values());
+          });
+        }
+      }).catch((err) => console.warn('[Supabase Order Sync]', err));
+    };
+
+    const interval = setInterval(syncOrdersFromSupabase, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Active delivery check
   const activeOrder = orders.find((o) => o.id === activeOrderId) || orders[0];
   const hasActiveDelivery = Boolean(
@@ -260,11 +285,13 @@ export default function App() {
             <MenuList
               items={menuItems}
               onOpenCustomizer={(item) => setCustomizingItem(item)}
+              onOrderPlaced={handleOrderPlaced}
+              currentUser={currentUser}
             />
 
             {/* Custom Order Form Section */}
             <section id="custom-order-section" className="py-12 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-              <CustomOrderForm />
+              <CustomOrderForm onOrderPlaced={handleOrderPlaced} />
             </section>
 
             <HeritageSection
@@ -317,6 +344,8 @@ export default function App() {
           item={customizingItem}
           onClose={() => setCustomizingItem(null)}
           onAddToCart={handleAddToCart}
+          onOrderPlaced={handleOrderPlaced}
+          currentUser={currentUser}
         />
       )}
 
@@ -365,7 +394,18 @@ export default function App() {
           onRefreshOrders={() => {
             fetchOrdersFromSupabase().then((supabaseOrders) => {
               if (supabaseOrders && supabaseOrders.length > 0) {
-                setOrders(supabaseOrders);
+                setOrders((prev) => {
+                  const localSaved = getSavedOrders();
+                  const map = new Map<string, Order>();
+                  supabaseOrders.forEach((o) => map.set(o.id, o));
+                  localSaved.forEach((o) => {
+                    if (!map.has(o.id)) map.set(o.id, o);
+                  });
+                  prev.forEach((o) => {
+                    if (!map.has(o.id)) map.set(o.id, o);
+                  });
+                  return Array.from(map.values());
+                });
               }
             });
           }}
@@ -410,7 +450,7 @@ export default function App() {
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-lg cursor-default"
           >
-            <CustomOrderForm isModal onClose={() => setIsCustomOrderOpen(false)} />
+            <CustomOrderForm isModal onClose={() => setIsCustomOrderOpen(false)} onOrderPlaced={handleOrderPlaced} />
           </div>
         </div>
       )}

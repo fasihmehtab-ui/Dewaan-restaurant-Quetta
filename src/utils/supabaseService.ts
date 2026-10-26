@@ -1,5 +1,6 @@
 import { supabase, SUPABASE_CONFIG } from './supabaseClient';
 import { Order, OrderStatus } from '../types';
+import { getSavedOrders } from './orderStorage';
 
 export type ReservationStatus = 'confirmed' | 'cancelled' | 'expired' | 'arrived';
 
@@ -272,17 +273,18 @@ export async function updateOrderInSupabase(order: Order): Promise<boolean> {
  * Fetch orders from Supabase backend
  */
 export async function fetchOrdersFromSupabase(): Promise<Order[]> {
+  const localList = getSavedOrders();
   try {
     const { data, error } = await supabase
       .from('orders')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error || !data) {
-      return [];
+    if (error || !data || data.length === 0) {
+      return localList;
     }
 
-    return data.map((row: any): Order => ({
+    const remoteList = data.map((row: any): Order => ({
       id: row.id,
       placedAt: row.created_at,
       status: (row.status as OrderStatus) || 'confirmed',
@@ -311,9 +313,20 @@ export async function fetchOrdersFromSupabase(): Promise<Order[]> {
       milestones: Array.isArray(row.milestones) ? row.milestones : [],
       chatMessages: Array.isArray(row.chat_messages) ? row.chat_messages : [],
     }));
+
+    // Merge remote and local (remote takes precedence, local retains in-flight/offline orders)
+    const map = new Map<string, Order>();
+    remoteList.forEach((o) => map.set(o.id, o));
+    localList.forEach((o) => {
+      if (!map.has(o.id)) map.set(o.id, o);
+    });
+
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.placedAt).getTime() - new Date(a.placedAt).getTime()
+    );
   } catch (err) {
     console.error('[Supabase] Error fetching orders:', err);
-    return [];
+    return localList;
   }
 }
 

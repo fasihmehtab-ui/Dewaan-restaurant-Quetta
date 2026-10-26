@@ -28,3 +28,18 @@ export function saveOrders(orders: Order[]): void {
     console.error('Error saving orders', err);
   }
 }
+
+export function appendSavedOrder(order: Order): void {
+  try {
+    const list = getSavedOrders();
+    const existingIdx = list.findIndex((o) => o.id === order.id);
+    if (existingIdx >= 0) {
+      list[existingIdx] = order;
+    } else {
+      list.unshift(order);
+    }
+    saveOrders(list);
+  } catch (err) {
+    console.error('Error appending order', err);
+  }
+}

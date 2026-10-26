@@ -6,8 +6,10 @@ import {
 } from 'lucide-react';
 import { CartItem, Order, OrderStatus } from '../types';
 import { saveOrderToSupabase, CustomerUser } from '../utils/supabaseService';
+import { appendSavedOrder } from '../utils/orderStorage';
 import { SUPABASE_CONFIG } from '../utils/supabaseClient';
 import { formatPKR } from '../utils/currency';
+import { createAndDispatchWhatsAppOrder } from '../utils/whatsappOrderService';
 
 interface CartCheckoutDrawerProps {
   isOpen: boolean;
@@ -224,12 +226,56 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
       console.warn('[Supabase Backend]', err);
     });
 
+    // Save order to local storage for instant sync with tracking & admin panel
+    appendSavedOrder(newOrder);
+
     setTimeout(() => {
       setIsSubmitting(false);
       onClearCart();
       onOrderPlaced(newOrder);
       onClose();
     }, 600);
+  };
+
+  // WhatsApp Order Handler: Uses unified engine to save order to Supabase, storage, and dispatch via WhatsApp
+  const handleWhatsAppOrder = async (singleCartItem?: CartItem) => {
+    const orderItems = singleCartItem ? [singleCartItem] : [...items];
+    if (orderItems.length === 0) return;
+
+    setIsSubmitting(true);
+
+    try {
+      await createAndDispatchWhatsAppOrder(
+        {
+          items: orderItems,
+          customer: {
+            fullName: fullName.trim() || undefined,
+            phone: phone.trim() || undefined,
+            email: email.trim() || undefined,
+            address: address.trim() || undefined,
+            aptSuite: aptSuite.trim() || undefined,
+            deliveryNotes: deliveryNotes.trim() ? `[WhatsApp Order] ${deliveryNotes.trim()}` : '[WhatsApp Order via Dastarkhwan Bag]',
+          },
+          orderType,
+          orderSource: 'whatsapp',
+          tip: singleCartItem ? 0 : selectedTip,
+          discount: singleCartItem ? 0 : discount,
+          promoCode: singleCartItem ? undefined : appliedPromo?.code,
+          currentUser,
+        },
+        onOrderPlaced
+      );
+
+      // Clear cart if entire bag was ordered
+      if (!singleCartItem) {
+        onClearCart();
+      }
+    } catch (err) {
+      console.warn('[Cart Checkout WhatsApp Order Error]', err);
+    } finally {
+      setIsSubmitting(false);
+      onClose();
+    }
   };
 
   return (
@@ -363,18 +409,15 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                             </span>
                           </div>
 
-                          <a
-                            href={`https://wa.me/923118427913?text=${encodeURIComponent(
-                              `Hello Dewaan, I want to order: ${cartItem.menuItem.name} - Price: ${formatPKR(cartItem.totalPrice)} - Quantity: ${cartItem.quantity}. My Address is: ${address ? address : ''}`
-                            )}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-[11px] font-medium text-[#25D366] hover:text-[#20ba5a] transition-colors"
-                            title="Order this dish on WhatsApp"
+                          <button
+                            type="button"
+                            onClick={() => handleWhatsAppOrder(cartItem)}
+                            className="inline-flex items-center gap-1 text-[11px] font-medium text-[#25D366] hover:text-[#20ba5a] transition-colors cursor-pointer"
+                            title="Order this dish on WhatsApp (saves to Supabase & Admin Panel)"
                           >
                             <MessageCircle className="w-3 h-3 fill-current" />
                             <span>Order on WhatsApp</span>
-                          </a>
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -710,20 +753,16 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
 
               {step === 'cart' ? (
                 <div className="space-y-2.5">
-                  {/* Order on WhatsApp button */}
-                  <a
-                    href={`https://wa.me/923118427913?text=${encodeURIComponent(
-                      items.length === 1
-                        ? `Hello Dewaan, I want to order: ${items[0].menuItem.name} - Price: ${formatPKR(items[0].totalPrice)} - Quantity: ${items[0].quantity}. My Address is: ${address ? address : ''}`
-                        : `Hello Dewaan, I want to order: ${items.map((it) => `${it.menuItem.name} (Qty: ${it.quantity})`).join(', ')} - Price: ${formatPKR(total)} - Quantity: ${items.reduce((s, it) => s + it.quantity, 0)}. My Address is: ${address ? address : ''}`
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-3.5 px-5 bg-[#25D366] hover:bg-[#20ba5a] active:scale-98 text-white font-semibold text-xs sm:text-sm rounded-full shadow-lg shadow-[#25D366]/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  {/* Order on WhatsApp button (Saves to Supabase & Admin Panel) */}
+                  <button
+                    type="button"
+                    onClick={() => handleWhatsAppOrder()}
+                    disabled={isSubmitting}
+                    className="w-full py-3.5 px-5 bg-[#25D366] hover:bg-[#20ba5a] active:scale-98 text-white font-semibold text-xs sm:text-sm rounded-full shadow-lg shadow-[#25D366]/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     <MessageCircle className="w-4 h-4 fill-current shrink-0" />
-                    <span>Order on WhatsApp</span>
-                  </a>
+                    <span>Order on WhatsApp (Save & Dispatch)</span>
+                  </button>
 
                   {/* Proceed to in-app Checkout */}
                   <button
@@ -747,19 +786,15 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     <span className="font-mono tabular-nums font-bold">{formatPKR(total)}</span>
                   </button>
 
-                  <a
-                    href={`https://wa.me/923118427913?text=${encodeURIComponent(
-                      items.length === 1
-                        ? `Hello Dewaan, I want to order: ${items[0].menuItem.name} - Price: ${formatPKR(items[0].totalPrice)} - Quantity: ${items[0].quantity}. My Address is: ${address || ''}`
-                        : `Hello Dewaan, I want to order: ${items.map((it) => `${it.menuItem.name} (Qty: ${it.quantity})`).join(', ')} - Price: ${formatPKR(total)} - Quantity: ${items.reduce((s, it) => s + it.quantity, 0)}. My Address is: ${address || ''}`
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-3 px-5 bg-[#25D366] hover:bg-[#20ba5a] active:scale-98 text-white font-semibold text-xs rounded-full transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#25D366]/20"
+                  <button
+                    type="button"
+                    onClick={() => handleWhatsAppOrder()}
+                    disabled={isSubmitting}
+                    className="w-full py-3 px-5 bg-[#25D366] hover:bg-[#20ba5a] active:scale-98 text-white font-semibold text-xs rounded-full transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#25D366]/20 disabled:opacity-50"
                   >
                     <MessageCircle className="w-4 h-4 fill-current shrink-0" />
-                    <span>Send Order via WhatsApp</span>
-                  </a>
+                    <span>Send Order via WhatsApp (Save & Dispatch)</span>
+                  </button>
 
                   <button
                     type="button"

@@ -1,18 +1,24 @@
 import React, { useState } from 'react';
 import { X, Flame, Plus, Minus, Check, Clock, Sparkles, Video, Image as ImageIcon, Play, MessageCircle } from 'lucide-react';
-import { MenuItem, PortionOption, ProteinOption, AccompanimentOption, AddOnOption, SpiceLevel, CartItem } from '../types';
+import { MenuItem, PortionOption, ProteinOption, AccompanimentOption, AddOnOption, SpiceLevel, CartItem, Order } from '../types';
 import { formatPKR, formatPKRDelta } from '../utils/currency';
+import { createAndDispatchWhatsAppOrder } from '../utils/whatsappOrderService';
+import { CustomerUser } from '../utils/supabaseService';
 
 interface MealCustomizerModalProps {
   item: MenuItem | null;
   onClose: () => void;
   onAddToCart: (cartItem: CartItem) => void;
+  onOrderPlaced?: (order: Order) => void;
+  currentUser?: CustomerUser | null;
 }
 
 export const MealCustomizerModal: React.FC<MealCustomizerModalProps> = ({
   item,
   onClose,
   onAddToCart,
+  onOrderPlaced,
+  currentUser,
 }) => {
   if (!item) return null;
 
@@ -21,10 +27,10 @@ export const MealCustomizerModal: React.FC<MealCustomizerModalProps> = ({
 
   // Customization states
   const [selectedPortion, setSelectedPortion] = useState<PortionOption>(
-    item.portionOptions[0] || { id: 'default', name: 'Standard Serving', priceDelta: 0, serving: '1 Person' }
+    (item.portionOptions && item.portionOptions[0]) || { id: 'default', name: 'Standard Serving', priceDelta: 0, serving: '1 Person' }
   );
 
-  const [selectedSpice, setSelectedSpice] = useState<SpiceLevel>(item.spiceLevelDefault);
+  const [selectedSpice, setSelectedSpice] = useState<SpiceLevel>(item.spiceLevelDefault || 'medium');
 
   const [selectedProtein, setSelectedProtein] = useState<ProteinOption | undefined>(
     item.proteinOptions && item.proteinOptions.length > 0 ? item.proteinOptions[0] : undefined
@@ -48,13 +54,13 @@ export const MealCustomizerModal: React.FC<MealCustomizerModalProps> = ({
   };
 
   // Calculate unit price based on customization
-  const activeBasePrice = item.basePrice;
+  const activeBasePrice = Number(item.basePrice) || 0;
   const unitPrice =
     activeBasePrice +
-    selectedPortion.priceDelta +
+    (selectedPortion?.priceDelta || 0) +
     (selectedProtein ? selectedProtein.priceDelta : 0) +
     (selectedAccompaniment ? selectedAccompaniment.priceDelta : 0) +
-    selectedAddOns.reduce((sum, add) => sum + add.price, 0);
+    selectedAddOns.reduce((sum, add) => sum + (add.price || 0), 0);
 
   const totalPrice = unitPrice * quantity;
 
@@ -78,6 +84,50 @@ export const MealCustomizerModal: React.FC<MealCustomizerModalProps> = ({
 
     onAddToCart(newCartItem);
     onClose();
+  };
+
+  const [isOrderingWhatsApp, setIsOrderingWhatsApp] = useState(false);
+
+  const handleWhatsAppOrder = async () => {
+    setIsOrderingWhatsApp(true);
+    const cartItem: CartItem = {
+      cartItemId: `${item.id}-${Date.now()}`,
+      menuItem: item,
+      quantity,
+      customization: {
+        portion: selectedPortion,
+        spiceLevel: selectedSpice,
+        protein: selectedProtein,
+        accompaniment: selectedAccompaniment,
+        selectedAddOns,
+        specialInstructions: specialInstructions.trim() || undefined,
+      },
+      unitPrice,
+      totalPrice,
+    };
+
+    try {
+      await createAndDispatchWhatsAppOrder(
+        {
+          items: [cartItem],
+          customer: {
+            fullName: currentUser?.fullName,
+            phone: currentUser?.phone,
+            address: currentUser?.deliveryAddress,
+            deliveryNotes: specialInstructions.trim() ? `[Customizer Note] ${specialInstructions.trim()}` : undefined,
+          },
+          currentUser,
+          orderType: 'delivery',
+          orderSource: 'whatsapp',
+        },
+        onOrderPlaced
+      );
+    } catch (err) {
+      console.warn('Error placing WhatsApp order from customizer:', err);
+    } finally {
+      setIsOrderingWhatsApp(false);
+      onClose();
+    }
   };
 
   const spiceLabels: Record<SpiceLevel, { title: string; desc: string; color: string; flameCount: number }> = {
@@ -472,18 +522,17 @@ export const MealCustomizerModal: React.FC<MealCustomizerModalProps> = ({
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1">
-            {/* Order on WhatsApp Button */}
-            <a
-              href={`https://wa.me/923118427913?text=${encodeURIComponent(
-                `Hello Dewaan, I want to order: ${item.name} - Price: ${formatPKR(totalPrice)} - Quantity: ${quantity}. My Address is:`
-              )}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 inline-flex items-center justify-center gap-2 px-5 py-3.5 bg-[#25D366] hover:bg-[#20ba5a] active:scale-98 text-white font-semibold text-xs sm:text-sm rounded-full transition-all shadow-md shadow-[#25D366]/20 cursor-pointer text-center"
+            {/* Order on WhatsApp Button (Saves to Supabase & Admin Panel) */}
+            <button
+              type="button"
+              onClick={handleWhatsAppOrder}
+              disabled={isOrderingWhatsApp}
+              className="flex-1 inline-flex items-center justify-center gap-2 px-5 py-3.5 bg-[#25D366] hover:bg-[#20ba5a] active:scale-98 text-white font-semibold text-xs sm:text-sm rounded-full transition-all shadow-md shadow-[#25D366]/20 cursor-pointer text-center disabled:opacity-50"
+              title="Order on WhatsApp (saves to Supabase & Admin Panel)"
             >
               <MessageCircle className="w-4 h-4 fill-current shrink-0" />
-              <span>Order on WhatsApp</span>
-            </a>
+              <span>{isOrderingWhatsApp ? 'Recording in System...' : 'Order on WhatsApp (Save & Dispatch)'}</span>
+            </button>
 
             {/* Add to Cart CTA */}
             <button
